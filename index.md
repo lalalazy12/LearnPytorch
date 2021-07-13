@@ -4,6 +4,17 @@
 
 ### Variable
 
+### Engine
+When we use
+```
+loss.backward()
+```
+it calls
+```
+def backward(self, gradient=None, retain_graph=None, create_graph=False, inputs=None):
+    torch.autograd.backward(self, gradient, retain_graph, create_graph, inputs=inputs)
+```
+
 Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
 
 ```markdown
