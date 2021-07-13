@@ -41,7 +41,7 @@ static struct PyMethodDef THPEngine_methods[] = {
   {nullptr}
 };
 ```
-Now in Now in THPEngine_run_backward, we can find out what backward() exactly do.
+Now in Now in THPEngine_run_backward, we can find out what `backward()` exactly do.
 ```
 PyObject *THPEngine_run_backward(PyObject *self, PyObject *args, PyObject *kwargs)
 {
@@ -66,7 +66,7 @@ if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OObb|Obb", (char**)accepted_kwar
 
 
 ```
-1. What is edge_list
+1. What is `edge_list`
 
     ```
     using edge_list = std::vector<Edge>;
@@ -79,7 +79,7 @@ if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OObb|Obb", (char**)accepted_kwar
     Edge(std::shared_ptr<Node> function_, uint32_t input_nr_) noexcept
         : function(std::move(function_)), input_nr(input_nr_) {}
     ```
-    In Pytorch graph, each edge stores the function (function) that the edge points at, and it also stores index(input_nr) of this function, while function could have more than one input, i.e. input_nr indicates that this edge is which input to the function.
+    In Pytorch graph, each edge stores the function (`function`) that the edge points at, and it also stores index(`input_nr`) of this function, while function could have more than one input, i.e. `input_nr` indicates that this edge is which input to the function.
 
 2. gradient_edge
 
@@ -96,41 +96,16 @@ if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OObb|Obb", (char**)accepted_kwar
     ```
 
 ```
-std::vector<Edge> output_edges;
-  if (inputs != nullptr) {
-    int num_inputs = PyTuple_GET_SIZE(inputs);
-    output_edges.reserve(num_inputs);
-    for (const auto i : c10::irange(num_inputs)) {
-      PyObject *input = PyTuple_GET_ITEM(inputs, i);
-      const auto& tensor = THPVariable_Unpack(input);
-      const auto output_nr = tensor.output_nr();
-      auto grad_fn = tensor.grad_fn();
-      if (!grad_fn) {
-        grad_fn = torch::autograd::impl::try_get_grad_accumulator(tensor);
-      }
-      if (accumulate_grad) {
-        tensor.retain_grad();
-      }
-      THPUtils_assert(tensor.requires_grad(),
-          "One of the differentiated Tensors does not require grad");
-      if (!grad_fn) 
-      {
-        // NOTE [ Autograd Unreachable Input ]
-        // Since input has no grad_accumulator, its guaranteed to be unreachable.
-        // We initialize an edge pointing to a non-nullptr Node so nodes in the graph
-        // (e.g., mul when an operand is scalar) that have edges pointing to nullptr
-        // don't get erroneously assigned `needed = True` in exec_info.
-        output_edges.emplace_back(std::make_shared<Identity>(), 0);
-      } else {
-        output_edges.emplace_back(grad_fn, output_nr);
-      }
-    }
+  variable_list outputs;
+  {
+    pybind11::gil_scoped_release no_gil; ???
+    auto& engine = python::PythonEngine::get_python_engine();
+    outputs = engine.execute(roots, grads, keep_graph, create_graph,accumulate_grad, output_edges);
   }
-```  
+```
 
 
-
-
+1
 
 
 
