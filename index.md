@@ -54,11 +54,20 @@ if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OObb|Obb", (char**)accepted_kwar
     variable_list grads;
     grads.reserve(num_tensors);
     for(const auto i : c10::irange(num_tensors)) {
+
+        // roots
         auto gradient_edge = torch::autograd::impl::gradient_edge(variable);
         roots.push_back(std::move(gradient_edge));
 
+        // grads
+        PyObject *grad = PyTuple_GET_ITEM(grad_tensors, i);
+        const Variable& grad_var = THPVariable_Unpack(grad);
+        grads.push_back(grad_var);
+
+
 ```
 1. What is edge_list
+
     ```
     using edge_list = std::vector<Edge>;
     ```
@@ -73,20 +82,54 @@ if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OObb|Obb", (char**)accepted_kwar
     In Pytorch graph, each edge stores the function (function) that the edge points at, and it also stores index(input_nr) of this function, while function could have more than one input, i.e. input_nr indicates that this edge is which input to the function.
 
 2. gradient_edge
-If grad_fn is null (as is the case for a leaf node), it instead interpret the gradient function to be a gradient accumulator, which will accumulate its inputs into the grad property of the variable. Note that only variables which have `requires_grad = True` can have gradient accumulators.
+
+    If grad_fn is null (as a leaf node),  the gradient function is a gradient accumulator, which will accumulate its inputs into the grad property of the variable. Note that only variables which have `requires_grad = True` can have gradient accumulators.
+
+    ```
+    Edge gradient_edge(const Variable& self???) {
+        if (const auto& gradient = self.grad_fn()) {
+        return Edge(gradient, self.output_nr());
+        } else {
+        return Edge(grad_accumulator(self), 0);
+        }
+    }
+    ```
 
 ```
-Edge gradient_edge(const Variable& self???) {
-    if (const auto& gradient = self.grad_fn()) {
-      return Edge(gradient, self.output_nr());
-    } else {
-      return Edge(grad_accumulator(self), 0);
+std::vector<Edge> output_edges;
+  if (inputs != nullptr) {
+    int num_inputs = PyTuple_GET_SIZE(inputs);
+    output_edges.reserve(num_inputs);
+    for (const auto i : c10::irange(num_inputs)) {
+      PyObject *input = PyTuple_GET_ITEM(inputs, i);
+      const auto& tensor = THPVariable_Unpack(input);
+      const auto output_nr = tensor.output_nr();
+      auto grad_fn = tensor.grad_fn();
+      if (!grad_fn) {
+        grad_fn = torch::autograd::impl::try_get_grad_accumulator(tensor);
+      }
+      if (accumulate_grad) {
+        tensor.retain_grad();
+      }
+      THPUtils_assert(tensor.requires_grad(),
+          "One of the differentiated Tensors does not require grad");
+      if (!grad_fn) 
+      {
+        // NOTE [ Autograd Unreachable Input ]
+        // Since input has no grad_accumulator, its guaranteed to be unreachable.
+        // We initialize an edge pointing to a non-nullptr Node so nodes in the graph
+        // (e.g., mul when an operand is scalar) that have edges pointing to nullptr
+        // don't get erroneously assigned `needed = True` in exec_info.
+        output_edges.emplace_back(std::make_shared<Identity>(), 0);
+      } else {
+        output_edges.emplace_back(grad_fn, output_nr);
+      }
     }
   }
-```
+```  
 
 
-For each tensor, 
+
 
 
 
