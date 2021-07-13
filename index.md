@@ -30,7 +30,7 @@ def backward(
         allow_unreachable=True, accumulate_grad=True)  
 
 ```
-Pytorch use CPython or Pybind to extent python in C++, for more detail, please refer to reference. Here we can see what function is calls in the methods table, it calls the THPEngine_run_backward, which is a C++ function.
+Pytorch use CPython or Pybind to extent python in C++, for more detail, please refer to reference. Here we can see what function is called in the methods table, it calls the THPEngine_run_backward, which is a C++ function.
 ```
 static struct PyMethodDef THPEngine_methods[] = {
   {(char*)"run_backward",
@@ -59,18 +59,18 @@ if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OObb|Obb", (char**)accepted_kwar
 
 ```
 1. What is edge_list
-```
-using edge_list = std::vector<Edge>;
-```
-Edge is a struct:
-```
-struct Edge {
-  Edge() noexcept : function(nullptr), input_nr(0) {}
+    ```
+    using edge_list = std::vector<Edge>;
+    ```
+    Edge is a struct:
+    ```
+    struct Edge {
+    Edge() noexcept : function(nullptr), input_nr(0) {}
 
-  Edge(std::shared_ptr<Node> function_, uint32_t input_nr_) noexcept
-      : function(std::move(function_)), input_nr(input_nr_) {}
-```
-In Pytorch graph, each edge store the function (function) that the edge points at, and it also stores index(input_nr) of this function, when one function could have more than one input, i.e. this edge is which input to the function.
+    Edge(std::shared_ptr<Node> function_, uint32_t input_nr_) noexcept
+        : function(std::move(function_)), input_nr(input_nr_) {}
+    ```
+    In Pytorch graph, each edge stores the function (function) that the edge points at, and it also stores index(input_nr) of this function, while function could have more than one input, i.e. input_nr indicates that this edge is which input to the function.
 
 2. gradient_edge
 If grad_fn is null (as is the case for a leaf node), it instead interpret the gradient function to be a gradient accumulator, which will accumulate its inputs into the grad property of the variable. Note that only variables which have `requires_grad = True` can have gradient accumulators.
