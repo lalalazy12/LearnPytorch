@@ -12,10 +12,65 @@ loss.backward()
 it calls
 ```
 def backward(self, gradient=None, retain_graph=None, create_graph=False, inputs=None):
+    //check ...
     torch.autograd.backward(self, gradient, retain_graph, create_graph, inputs=inputs)
 ```
 
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
+```
+def backward(
+    tensors: _TensorOrTensors,
+    grad_tensors: Optional[_TensorOrTensors] = None,
+    retain_graph: Optional[bool] = None,
+    create_graph: bool = False,
+    grad_variables: Optional[_TensorOrTensors] = None,
+    inputs: Optional[_TensorOrTensors] = None) -> None:
+
+    Variable._execution_engine.run_backward(
+        tensors, grad_tensors_, retain_graph, create_graph, inputs,
+        allow_unreachable=True, accumulate_grad=True)  
+
+```
+Pytorch use CPython or Pybind to extent python in C++, for more detail, please refer to reference. Here we can see what function is calls in the methods table, it calls the THPEngine_run_backward, which is a C++ function.
+```
+static struct PyMethodDef THPEngine_methods[] = {
+  {(char*)"run_backward",
+    castPyCFunctionWithKeywords(THPEngine_run_backward),
+    METH_VARARGS | METH_KEYWORDS, nullptr},
+  {(char*)"queue_callback", THPEngine_queue_callback, METH_O, nullptr},
+  {(char*)"is_checkpoint_valid", THPEngine_is_checkpoint_valid, METH_NOARGS, nullptr},
+  {nullptr}
+};
+```
+Now in THPEngine_run_backward, we can find out what backward() exactly do.
+```
+PyObject *THPEngine_run_backward(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OObb|Obb", (char**)accepted_kwargs,
+        &tensors, &grad_tensors, &keep_graph, &create_graph, &inputs, &allow_unreachable, &accumulate_grad))
+    return nullptr;
+  //edge_list: vector
+  edge_list roots;
+  roots.reserve(num_tensors);
+  variable_list grads;
+  grads.reserve(num_tensors);
+  for(const auto i : c10::irange(num_tensors)) {
+    auto gradient_edge = torch::autograd::impl::gradient_edge(variable);
+    roots.push_back(std::move(gradient_edge));
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ```markdown
 Syntax highlighted code block
