@@ -41,26 +41,52 @@ static struct PyMethodDef THPEngine_methods[] = {
   {nullptr}
 };
 ```
-Now in THPEngine_run_backward, we can find out what backward() exactly do.
+Now in Now in THPEngine_run_backward, we can find out what backward() exactly do.
 ```
 PyObject *THPEngine_run_backward(PyObject *self, PyObject *args, PyObject *kwargs)
 {
 if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OObb|Obb", (char**)accepted_kwargs,
         &tensors, &grad_tensors, &keep_graph, &create_graph, &inputs, &allow_unreachable, &accumulate_grad))
     return nullptr;
-  //edge_list: vector
-  edge_list roots;
-  roots.reserve(num_tensors);
-  variable_list grads;
-  grads.reserve(num_tensors);
-  for(const auto i : c10::irange(num_tensors)) {
-    auto gradient_edge = torch::autograd::impl::gradient_edge(variable);
-    roots.push_back(std::move(gradient_edge));
+    //edge_list: vector
+    edge_list roots;
+    roots.reserve(num_tensors);
+    variable_list grads;
+    grads.reserve(num_tensors);
+    for(const auto i : c10::irange(num_tensors)) {
+        auto gradient_edge = torch::autograd::impl::gradient_edge(variable);
+        roots.push_back(std::move(gradient_edge));
 
+```
+1. What is edge_list
+```
+using edge_list = std::vector<Edge>;
+```
+Edge is a struct:
+```
+struct Edge {
+  Edge() noexcept : function(nullptr), input_nr(0) {}
+
+  Edge(std::shared_ptr<Node> function_, uint32_t input_nr_) noexcept
+      : function(std::move(function_)), input_nr(input_nr_) {}
+```
+In Pytorch graph, each edge store the function (function) that the edge points at, and it also stores index(input_nr) of this function, when one function could have more than one input, i.e. this edge is which input to the function.
+
+2. gradient_edge
+If grad_fn is null (as is the case for a leaf node), it instead interpret the gradient function to be a gradient accumulator, which will accumulate its inputs into the grad property of the variable. Note that only variables which have `requires_grad = True` can have gradient accumulators.
+
+```
+Edge gradient_edge(const Variable& self???) {
+    if (const auto& gradient = self.grad_fn()) {
+      return Edge(gradient, self.output_nr());
+    } else {
+      return Edge(grad_accumulator(self), 0);
+    }
+  }
 ```
 
 
-
+For each tensor, 
 
 
 
