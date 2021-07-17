@@ -95,6 +95,7 @@ for(const auto i : c10::irange(num_tensors)) {
     }
     ```
 3. grads???
+
      `grads = None` by default, however if you call loss.backward(gradient = torch.rand([x,x...x])), it would saves gradient tensor 
 
 
@@ -161,6 +162,7 @@ for(const auto i : c10::irange(num_tensors)) {
 
 
 1. Rekease [GIL](https://pybind11.readthedocs.io/en/stable/advanced/misc. html#global-interpreter-lock-gil)
+
   The autograd engine was called while holding the GIL, the autograd engine is an expensive operation that does not require the GIL to be held so you should release it with `pybind11::gil_scoped_release no_gil;`
   
 
