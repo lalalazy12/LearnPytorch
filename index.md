@@ -48,21 +48,21 @@ PyObject *THPEngine_run_backward(PyObject *self, PyObject *args, PyObject *kwarg
 if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OObb|Obb", (char**)accepted_kwargs,
         &tensors, &grad_tensors, &keep_graph, &create_graph, &inputs, &allow_unreachable, &accumulate_grad))
     return nullptr;
-    //edge_list: vector
-    edge_list roots;
-    roots.reserve(num_tensors);
-    variable_list grads;
-    grads.reserve(num_tensors);
-    for(const auto i : c10::irange(num_tensors)) {
+//edge_list: vector
+edge_list roots;
+roots.reserve(num_tensors);
+variable_list grads;
+grads.reserve(num_tensors);
+for(const auto i : c10::irange(num_tensors)) {
 
-        // roots
-        auto gradient_edge = torch::autograd::impl::gradient_edge(variable);
-        roots.push_back(std::move(gradient_edge));
+  // roots
+  auto gradient_edge = torch::autograd::impl::gradient_edge(variable);
+  roots.push_back(std::move(gradient_edge));
 
-        // grads
-        PyObject *grad = PyTuple_GET_ITEM(grad_tensors, i);
-        const Variable& grad_var = THPVariable_Unpack(grad);
-        grads.push_back(grad_var);
+  // grads
+  PyObject *grad = PyTuple_GET_ITEM(grad_tensors, i);
+  const Variable& grad_var = THPVariable_Unpack(grad);
+  grads.push_back(grad_var);
 
 
 ```
@@ -79,14 +79,14 @@ if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OObb|Obb", (char**)accepted_kwar
     Edge(std::shared_ptr<Node> function_, uint32_t input_nr_) noexcept
         : function(std::move(function_)), input_nr(input_nr_) {}
     ```
-    In Pytorch graph, each edge stores the function (`function`) that the edge points at, and it also stores index(`input_nr`) of this function, while function could have more than one input, i.e. `input_nr` indicates that this edge is which input to the function.
+    In Pytorch graph, each edge stores the function (`function`) that the edge points at, and it also stores index(`input_nr`) of this function, since function could have more than one input, i.e. `input_nr` indicates that this edge is which input to the function.
 
 2. gradient_edge
 
     If grad_fn is null (as a leaf node),  the gradient function is a gradient accumulator, which will accumulate its inputs into the grad property of the variable. Note that only variables which have `requires_grad = True` can have gradient accumulators.
 
     ```
-    Edge gradient_edge(const Variable& self???) {
+    Edge gradient_edge(const Variable& self) {
         if (const auto& gradient = self.grad_fn()) {
         return Edge(gradient, self.output_nr());
         } else {
@@ -94,18 +94,76 @@ if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OObb|Obb", (char**)accepted_kwar
         }
     }
     ```
+3. grads???
+     `grads = None` by default, however if you call loss.backward(gradient = torch.rand([x,x...x])), it would saves gradient tensor 
+
+
+```
+??????
+  std::vector<Edge> output_edges;
+  if (inputs != nullptr) {
+    int num_inputs = PyTuple_GET_SIZE(inputs);
+    output_edges.reserve(num_inputs);
+    for (const auto i : c10::irange(num_inputs)) {
+      PyObject *input = PyTuple_GET_ITEM(inputs, i);
+      const auto& tensor = THPVariable_Unpack(input);
+      const auto output_nr = tensor.output_nr();
+      auto grad_fn = tensor.grad_fn();
+      if (!grad_fn) {
+        grad_fn = torch::autograd::impl::try_get_grad_accumulator(tensor);
+      }
+      if (accumulate_grad) {
+        tensor.retain_grad();
+      }
+      if (!grad_fn) {
+        // NOTE [ Autograd Unreachable Input ]
+        // Since input has no grad_accumulator, its guaranteed to be unreachable.
+        // We initialize an edge pointing to a non-nullptr Node so nodes in the graph
+        // (e.g., mul when an operand is scalar) that have edges pointing to nullptr
+        // don't get erroneously assigned `needed = True` in exec_info.
+        output_edges.emplace_back(std::make_shared<Identity>(), 0);
+      } else {
+        output_edges.emplace_back(grad_fn, output_nr);
+      }
+    }
+  }
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ```
   variable_list outputs;
   {
-    pybind11::gil_scoped_release no_gil; ???
+    pybind11::gil_scoped_release no_gil; 
     auto& engine = python::PythonEngine::get_python_engine();
     outputs = engine.execute(roots, grads, keep_graph, create_graph,accumulate_grad, output_edges);
   }
 ```
 
 
-1
+1. Rekease [GIL](https://pybind11.readthedocs.io/en/stable/advanced/misc. html#global-interpreter-lock-gil)
+  The autograd engine was called while holding the GIL, the autograd engine is an expensive operation that does not require the GIL to be held so you should release it with `pybind11::gil_scoped_release no_gil;`
+  
+
 
 
 
