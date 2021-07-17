@@ -191,6 +191,7 @@ for(const auto i : c10::irange(num_tensors)) {
   ```
 
   To understand the reentrant backwards problem, we have to notice two aspects of how the autograd engine is implemented today:
+
     1. When you call Engine::execute(), you want to block until differentiation finishes so that you can get the final result variables of the backwards pass.
     2. The engine operates by having a single worker thread per work queue, and every work queue is pinned to a specific device where the operation is executed.
 
