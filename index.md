@@ -163,9 +163,36 @@ for(const auto i : c10::irange(num_tensors)) {
 
 1. Rekease [GIL](https://pybind11.readthedocs.io/en/stable/advanced/misc. html#global-interpreter-lock-gil)
 
-  The autograd engine was called while holding the GIL, the autograd engine is an expensive operation that does not require the GIL to be held so you should release it with `pybind11::gil_scoped_release no_gil;`
+    The autograd engine was called while holding the GIL, the autograd engine is an expensive operation that does not require the GIL to be held so you should release it with `pybind11::gil_scoped_release no_gil;`
   
+2. Engine.execute()
 
+  ```
+  variable_list PythonEngine::execute(
+    const edge_list& roots,
+    const variable_list& inputs,
+    bool keep_graph,
+    bool create_graph,
+    bool accumulate_grad,
+    const edge_list& outputs) {
+  TORCH_CHECK(!PyGILState_Check(), "The autograd engine was called while holding the GIL. If you are using the C++ "
+                                   "API, the autograd engine is an expensive operation that does not require the "
+                                   "GIL to be held so you should release it with 'pybind11::gil_scoped_release no_gil;'"
+                                   ". If you are not using the C++ API, please report a bug to the pytorch team.")
+  try {
+    return Engine::execute(roots, inputs, keep_graph, create_graph, accumulate_grad, outputs);
+  } catch (python_error& e) {
+    e.restore();
+    throw;
+  }
+}
+ 
+  
+  ```
+
+  To understand the reentrant backwards problem, we have to notice two aspects of how the autograd engine is implemented today:
+    1. When you call Engine::execute(), you want to block until differentiation finishes so that you can get the final result variables of the backwards pass.
+    2. The engine operates by having a single worker thread per work queue, and every work queue is pinned to a specific device where the operation is executed.
 
 
 
