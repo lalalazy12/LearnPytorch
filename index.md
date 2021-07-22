@@ -178,6 +178,7 @@ auto Engine::execute(const edge_list& roots,
       /* depth */ not_reentrant_backward_call ? 0 : total_depth + 1,
       /* cpu_ready_queue */ local_ready_queue);
 
+  //---------------------------3-------------------------------
   // If we receive a single root, skip creating extra root node
   bool skip_dummy_node = roots.size() == 1;
   auto graph_root = skip_dummy_node ?
@@ -259,19 +260,46 @@ auto Engine::execute(const edge_list& roots,
     CPU threads are dedicated to processing CPU work for the backward they invoked. So any given graph task maintains its own cpu_ready_queue_ where you should send work for it to be done. We memoize the cpu_ready_queue_ per GraphTask so that we know which ready queue we should push to if we are on device thread (i.e. GPU) and but next NodeTask should be run on CPU.
 
 
+3. Compute_dependecies
 
+    If the input is a single node, the single node is the starting point of the graph, otherwise a GraphRoot instance is created as the starting point of the graph.
+    
+    Calculate the number of dependencies of each node participating in the gradient calculation, implemented by BFS search for nodes in GraphTask through GraphRoot.
+    
+    ```
+    auto Engine::compute_dependencies(Node* root, GraphTask& task, uint64_t min_topo_nr) -> void {
+      std::unordered_set<Node*> seen;
+      std::vector<Node*> queue { root };
+      bool might_use_cuda = at::globalContext().hasCUDA();
+      bool will_use_cuda = false;
+
+      // Queue contains all nodes that will start propagating gradients.
+      //----------BFS----------
+      auto& dependencies = task.dependencies_;
+      while (!queue.empty()) {
+        auto fn = queue.back(); queue.pop_back();
+        if (fn->topological_nr() < min_topo_nr) {
+          continue;
+        }
+        for (const auto& edge : fn->next_edges()) {
+          if (auto next_ptr = edge.function.get()) {
+            dependencies[next_ptr] += 1;
+            const bool was_inserted = seen.insert(next_ptr).second;
+            if (was_inserted) queue.push_back(next_ptr);
+    ```
+    Dependencies is a member variable in GraphTask, the type is std::unordered_map `std::unordered_map<Node*, int> dependencies_;`. After executing the above function, the number of keys in the dependencies is the same as the number of Nodes in the calculation graph, and the dependencies corresponding to each function can be regarded as the out-degree of the function in the forward calculation graph.
 
 
 
     tip:
-    1.make_shared
+    1. make_shared
       [make_shared V.S. shared_ptr](https://www.jianshu.com/p/03eea8262c11)
 
 
-  To understand the [reentrant](https://www.cnblogs.com/clover-toeic/p/3738464.html) backwards problem, we have to notice two aspects of how the autograd engine is implemented today:
+    2. To understand the [reentrant](https://www.cnblogs.com/clover-toeic/p/3738464.html) backwards problem, we have to notice two aspects of how the autograd engine is implemented today:
 
-    1. When you call Engine::execute(), you want to block until differentiation finishes so that you can get the final result variables of the backwards pass.
-    2. The engine operates by having a single worker thread per work queue, and every work queue is pinned to a specific device where the operation is executed.
+        1. When you call Engine::execute(), you want to block until differentiation finishes so that you can get the final result variables of the backwards pass.
+        2. The engine operates by having a single worker thread per work queue, and every work queue is pinned to a specific device where the operation is executed.
 
 
 
