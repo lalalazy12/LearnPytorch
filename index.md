@@ -129,12 +129,6 @@ for(const auto i : c10::irange(num_tensors)) {
 
 ```
 
-
-
-
-
-
-
 ```
   variable_list outputs;
   {
@@ -157,6 +151,7 @@ for(const auto i : c10::irange(num_tensors)) {
         return Engine::execute(roots, inputs, keep_graph, create_graph, accumulate_grad, outputs);
       }
     ```
+
 ### Engine::execute
 
 ```
@@ -175,6 +170,7 @@ auto Engine::execute(const edge_list& roots,
   // A fresh first time Engine::execute call should start on the CPU device, initialize
   init_local_ready_queue();
   bool not_reentrant_backward_call = worker_device == NO_DEVICE;??
+  //---------------------------2-------------------------------
               //------------tip 1-----------
   auto graph_task = std::make_shared<GraphTask>(
       /* keep_graph */ keep_graph,
@@ -223,8 +219,45 @@ auto Engine::execute(const edge_list& roots,
 
 
 1.Local ready queue
+
   A fresh first time Engine::execute call should start on the CPU device, initialize a new thread local ready queue on CPU or reuse the existing one (if there is one allocated already, i.e. consecutive backward calls)
-  1. Graph task
+
+
+  1.`init_local_ready_queue()`
+    ```
+    void Engine::init_local_ready_queue(std::shared_ptr<ReadyQueue> ready_queue) {
+      if (ready_queue) {
+        // if ready_queue provided in the caller, use the caller's ready_queue to initialize local_ready_queue
+        local_ready_queue = std::move(ready_queue);
+      } else if (!local_ready_queue){
+        // otherwise if local_ready_queue not allocated, allocate a new ready_queue
+        local_ready_queue = std::make_shared<ReadyQueue>();
+      }
+    }
+    ```
+
+  2.ReadyQueue
+
+    ReadyQueue uses priority queue to maintain NodeTasks.
+    ```
+    struct ReadyQueue {
+      private:
+        ...
+        std::priority_queue<NodeTask, std::vector<NodeTask>, CompareNodeTaskTime> heap_;
+        ...};
+    ```
+
+2.GraphTask 
+
+  GraphTask holds metadata needed for execution of backward(), e.g: local_ready_queue.
+  ```
+  struct GraphTask: std::enable_shared_from_this<GraphTask> {
+    std::shared_ptr<ReadyQueue> cpu_ready_queue_;
+  ```
+  CPU threads are dedicated to processing CPU work for the backward they invoked. So any given graph task maintains its own cpu_ready_queue_ where you should send work for it to be done. We memoize the cpu_ready_queue_ per GraphTask so that we know which ready queue we should push to if we are on device thread (i.e. GPU) and but next NodeTask should be run on CPU.
+
+
+
 
 
 
@@ -233,7 +266,7 @@ auto Engine::execute(const edge_list& roots,
       [make_shared V.S. shared_ptr](https://www.jianshu.com/p/03eea8262c11)
 
 
-  To understand the reentrant backwards problem, we have to notice two aspects of how the autograd engine is implemented today:
+  To understand the [reentrant](https://www.cnblogs.com/clover-toeic/p/3738464.html) backwards problem, we have to notice two aspects of how the autograd engine is implemented today:
 
     1. When you call Engine::execute(), you want to block until differentiation finishes so that you can get the final result variables of the backwards pass.
     2. The engine operates by having a single worker thread per work queue, and every work queue is pinned to a specific device where the operation is executed.
