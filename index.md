@@ -223,29 +223,29 @@ auto Engine::execute(const edge_list& roots,
   A fresh first time Engine::execute call should start on the CPU device, initialize a new thread local ready queue on CPU or reuse the existing one (if there is one allocated already, i.e. consecutive backward calls)
 
 
-  1.`init_local_ready_queue()`
-    ```
-    void Engine::init_local_ready_queue(std::shared_ptr<ReadyQueue> ready_queue) {
-      if (ready_queue) {
-        // if ready_queue provided in the caller, use the caller's ready_queue to initialize local_ready_queue
-        local_ready_queue = std::move(ready_queue);
-      } else if (!local_ready_queue){
-        // otherwise if local_ready_queue not allocated, allocate a new ready_queue
-        local_ready_queue = std::make_shared<ReadyQueue>();
+    1.`init_local_ready_queue()`
+      ```
+      void Engine::init_local_ready_queue(std::shared_ptr<ReadyQueue> ready_queue) {
+        if (ready_queue) {
+          // if ready_queue provided in the caller, use the caller's ready_queue to initialize local_ready_queue
+          local_ready_queue = std::move(ready_queue);
+        } else if (!local_ready_queue){
+          // otherwise if local_ready_queue not allocated, allocate a new ready_queue
+          local_ready_queue = std::make_shared<ReadyQueue>();
+        }
       }
-    }
-    ```
+      ```
 
-  2.ReadyQueue
+    2.ReadyQueue
 
-    ReadyQueue uses priority queue to maintain NodeTasks.
-    ```
-    struct ReadyQueue {
-      private:
-        ...
-        std::priority_queue<NodeTask, std::vector<NodeTask>, CompareNodeTaskTime> heap_;
-        ...};
-    ```
+      ReadyQueue uses priority queue to maintain NodeTasks.
+      ```
+      struct ReadyQueue {
+        private:
+          ...
+          std::priority_queue<NodeTask, std::vector<NodeTask>, CompareNodeTaskTime> heap_;
+          ...};
+      ```
 
 2.GraphTask 
 
