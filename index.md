@@ -220,10 +220,10 @@ auto Engine::execute(const edge_list& roots,
 
 1.Local ready queue
 
-  A fresh first time Engine::execute call should start on the CPU device, initialize a new thread local ready queue on CPU or reuse the existing one (if there is one allocated already, i.e. consecutive backward calls)
+    A fresh first time Engine::execute call should start on the CPU device, initialize a new thread local ready queue on CPU or reuse the existing one (if there is one allocated already, i.e. consecutive backward calls)
 
 
-  -`init_local_ready_queue()`
+    -`init_local_ready_queue()`
     
 
       ```
@@ -238,7 +238,7 @@ auto Engine::execute(const edge_list& roots,
       }
       ```
 
-  -ReadyQueue
+    -ReadyQueue
 
       ReadyQueue uses priority queue to maintain NodeTasks.
       ```
