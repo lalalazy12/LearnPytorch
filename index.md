@@ -189,6 +189,7 @@ auto Engine::execute(const edge_list& roots,
   // Now compute the dependencies for all executable functions
   compute_dependencies(graph_root.get(), *graph_task, min_topo_nr);
 
+  //---------------------------4-------------------------------
   if (!outputs.empty()) {
     graph_task->init_to_execute(*graph_root, outputs, accumulate_grad, min_topo_nr);
   }
@@ -287,8 +288,103 @@ auto Engine::execute(const edge_list& roots,
             const bool was_inserted = seen.insert(next_ptr).second;
             if (was_inserted) queue.push_back(next_ptr);
     ```
-    Dependencies is a member variable in GraphTask, the type is std::unordered_map `std::unordered_map<Node*, int> dependencies_;`. After executing the above function, the number of keys in the dependencies is the same as the number of Nodes in the calculation graph, and the dependencies corresponding to each function can be regarded as the out-degree of the function in the forward calculation graph.
+    Dependencies is a member variable in GraphTask, the type: `std::unordered_map<Node*, int> dependencies_;`. After executing the above function, the number of keys in the dependencies is the same as the number of Nodes in the calculation graph, and the dependencies corresponding to each node can be regarded as the out-degree of the node in the forward calculation graph.
 
+4. `execute_with_graph_task`
+    ```
+    c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
+        const std::shared_ptr<GraphTask>& graph_task,
+        std::shared_ptr<Node> graph_root,
+        InputBuffer&& input_buffer) {
+
+  //---------------------------1-------------------------------
+      initialize_device_threads_pool();
+      // Lock mutex for GraphTask.
+      std::unique_lock<std::mutex> lock(graph_task->mutex_);
+
+      auto queue = ready_queue(graph_task->cpu_ready_queue_, input_buffer.device());
+
+      // worker_device == NO_DEVICE it's a CPU thread and it's trying to drive the
+      // autograd engine with corresponding GraphTask, and its NOT a re-entrant call
+      if (worker_device == NO_DEVICE) {
+        // We set the worker_device to CPU_DEVICE only if worker_device was previously
+        // NO_DEVICE. Setting it to CPU afterwards allow us to detect whether this is
+        // a re-entrant call or not.
+        set_device(CPU_DEVICE);
+
+        // set the graph_task owner to the current device
+        graph_task->owner_ = worker_device;
+
+        // Now that all the non-thread safe fields of the graph_task have been populated,
+        // we can enqueue it.
+        queue->push(NodeTask(graph_task, std::move(graph_root), std::move(input_buffer)));
+
+        // The owning thread start to drive the engine execution for any CPU task that
+        // was just pushed or will be added later from other worker threads
+        lock.unlock();
+        thread_main(graph_task);
+        TORCH_INTERNAL_ASSERT(graph_task->future_result_->completed());
+        // reset the worker_device after the completion of the graph_task, this is so
+        // that the initial state of the engine remains the same across every backward()
+        // or grad() call, we don't need to reset local_ready_queue as we could possibly
+        // reuse it for new backward calls.
+        worker_device = NO_DEVICE;
+      } else {
+        // If worker_device is any devices (i.e. CPU, CUDA): this is a re-entrant
+        //    backward call from that device.
+        graph_task->owner_ = worker_device;
+
+        // Now that all the non-thread safe fields of the graph_task have been populated,
+        // we can enqueue it.
+        queue->push(NodeTask(graph_task, std::move(graph_root), std::move(input_buffer)));
+
+        if (current_depth >= max_recursion_depth_) {
+          // See Note [Reentrant backwards]
+          // If reached the max depth, switch to a different thread
+          add_thread_pool_task(graph_task);
+        } else {
+          // Total depth needs to be updated only in this codepath, since it is
+          // not used in the block above (when we call add_thread_pool_task).
+          // In the codepath above, GraphTask.reentrant_depth_ is used to
+          // bootstrap total_depth in the other thread.
+          ++total_depth;
+
+          // Get back to work while we wait for our new graph_task to
+          // complete!
+          ++current_depth;
+          lock.unlock();
+          thread_main(graph_task);
+          --current_depth;
+          --total_depth;
+
+          // The graph task should have completed and the associated future should
+          // be marked completed as well since 'thread_main' above is a call
+          // blocking an autograd engine thread.
+          TORCH_INTERNAL_ASSERT(graph_task->future_result_->completed());
+        }
+      }
+      // graph_task_exec_post_processing is done when the Future is marked as
+      // completed in mark_as_completed_and_run_post_processing.
+      return graph_task->future_result_;
+    }
+    ```
+
+    1. Initialize thread pool and prepare queue.
+        
+
+        
+        CPU ready queue is per GraphTask, but CUDA device ready queues are shared across all graph tasks
+        ```
+        auto Engine::ready_queue(std::shared_ptr<ReadyQueue> cpu_ready_queue, at::Device device) -> std::shared_ptr<ReadyQueue>{
+          if (device.type() == at::kCPU || device.type() == at::DeviceType::Meta) {
+            // return the cpu ready queue passed in
+            return cpu_ready_queue;
+          } else {
+            // See Note [Allocating GPUs to autograd threads]
+            return device_ready_queues_.at(device.index());
+        ```
+
+    2. 
 
 
     tip:
@@ -300,6 +396,7 @@ auto Engine::execute(const edge_list& roots,
 
         1. When you call Engine::execute(), you want to block until differentiation finishes so that you can get the final result variables of the backwards pass.
         2. The engine operates by having a single worker thread per work queue, and every work queue is pinned to a specific device where the operation is executed.
+    3. [thread pool](https://wiki.jikexueyuan.com/project/cplusplus-concurrency-action/content/chapter9/9.1-chinese.html)
 
 
 
