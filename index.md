@@ -297,7 +297,7 @@ auto Engine::execute(const edge_list& roots,
         std::shared_ptr<Node> graph_root,
         InputBuffer&& input_buffer) {
 
-  //---------------------------1-------------------------------
+      //---------------------------1-------------------------------
       initialize_device_threads_pool();
       // Lock mutex for GraphTask.
       std::unique_lock<std::mutex> lock(graph_task->mutex_);
@@ -372,7 +372,7 @@ auto Engine::execute(const edge_list& roots,
     1. Initialize thread pool and prepare queue.
         
 
-        
+
         CPU ready queue is per GraphTask, but CUDA device ready queues are shared across all graph tasks
         ```
         auto Engine::ready_queue(std::shared_ptr<ReadyQueue> cpu_ready_queue, at::Device device) -> std::shared_ptr<ReadyQueue>{
