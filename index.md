@@ -139,7 +139,7 @@ for(const auto i : c10::irange(num_tensors)) {
 ```
 
 
-1. Rekease [GIL](https://pybind11.readthedocs.io/en/stable/advanced/misc. html#global-interpreter-lock-gil)
+1. Release [GIL](https://pybind11.readthedocs.io/en/stable/advanced/misc. html#global-interpreter-lock-gil)
 
     The autograd engine was called while holding the GIL, the autograd engine is an expensive operation that does not require the GIL to be held so you should release it with `pybind11::gil_scoped_release no_gil;`
   
@@ -303,9 +303,8 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
   initialize_device_threads_pool();
   // Lock mutex for GraphTask.
   std::unique_lock<std::mutex> lock(graph_task->mutex_);
-
+  //---------------------------2-------------------------------
   auto queue = ready_queue(graph_task->cpu_ready_queue_, input_buffer.device());
-
   // worker_device == NO_DEVICE it's a CPU thread and it's trying to drive the
   // autograd engine with corresponding GraphTask, and its NOT a re-entrant call
   if (worker_device == NO_DEVICE) {
@@ -324,6 +323,7 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
     // The owning thread start to drive the engine execution for any CPU task that
     // was just pushed or will be added later from other worker threads
     lock.unlock();
+  //---------------------------3-------------------------------
     thread_main(graph_task);
     TORCH_INTERNAL_ASSERT(graph_task->future_result_->completed());
     // reset the worker_device after the completion of the graph_task, this is so
@@ -404,6 +404,8 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
     (2). In the for loop, `num_threads` threads are constructed through `std::thread` and they are deliberately run independently through `t.detach()`. In addition, we noticed that `this` pointer was passed in when creating new thread. This pointer points to the current engine instance. Since all threads share the same engine instance, so they can transfer data to each other. 
 
 
+2. Ready Queue
+
     CPU ready queue is per GraphTask, but CUDA device ready queues are shared across all graph tasks
     ```
     auto Engine::ready_queue(std::shared_ptr<ReadyQueue> cpu_ready_queue, at::Device device) -> std::shared_ptr<ReadyQueue>{
@@ -415,7 +417,74 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
         return device_ready_queues_.at(device.index());
     ```
 
-2. 
+3. 'thread_main(graph_task)' 
+
+    ```
+    auto Engine::thread_main(const std::shared_ptr<GraphTask>& graph_task) -> void {
+
+      // local_ready_queue should already been initialized when we get into thread_main
+      while (graph_task == nullptr || !graph_task->future_result_->completed()) {
+        // local_graph_task represents the graph_task we retrieve from the queue.
+        // The outer graph_task represents the overall graph_task we need to execute
+        // for reentrant execution.
+        std::shared_ptr<GraphTask> local_graph_task;
+        {
+          // Scope this block of execution since NodeTask is not needed after this
+          // block and can be deallocated (release any references to grad tensors
+          // as part of inputs_).
+          NodeTask task = local_ready_queue->pop();
+          // This will only work if the worker is running a non backward task
+          // TODO Needs to be fixed this to work in all cases
+          if (task.isShutdownTask_) {
+            C10_LOG_API_USAGE_ONCE("torch.autograd.thread_shutdown");
+            break;
+          }
+
+          if (!(local_graph_task = task.base_.lock())) {
+            // GraphTask for function is no longer valid, skipping further
+            // execution.
+            continue;
+          }
+
+          if (task.fn_ && !local_graph_task->has_error_.load()) {
+            AutoGradMode grad_mode(local_graph_task->grad_mode_);
+            try {
+              // The guard sets the thread_local current_graph_task on construction
+              // and restores it on exit. The current_graph_task variable helps
+              // queue_callback() to find the target GraphTask to append final
+              // callbacks.
+              GraphTaskGuard guard(local_graph_task);
+              NodeGuard ndguard(task.fn_);
+              evaluate_function(local_graph_task, task.fn_.get(), task.inputs_, local_graph_task->cpu_ready_queue_);
+            } catch (std::exception& e) {
+              thread_on_exception(local_graph_task, task.fn_, e);
+            }
+          }
+        }
+
+        // Decrement the outstanding tasks.
+        --local_graph_task->outstanding_tasks_;
+
+        // Check if we've completed execution.
+        if (local_graph_task->completed()) {
+          local_graph_task->mark_as_completed_and_run_post_processing();
+
+          auto base_owner = local_graph_task->owner_;
+          // The current worker thread finish the graph_task, but the owning thread
+          // of the graph_task might be sleeping on pop() if it does not have work.
+          // So we need to send a dummy function task to the owning thread just to
+          // ensure that it's not sleeping, so that we can exit the thread_main.
+          // If it has work, it might see that graph_task->outstanding_tasks_ == 0
+          // before it gets to the task, but it's a no-op anyway.
+          //
+          // NB: This is not necessary if the current thread is the owning thread.
+          if (worker_device != base_owner) {
+            // Synchronize outstanding_tasks_ with queue mutex
+            std::atomic_thread_fence(std::memory_order_release);
+            ready_queue_by_index(local_graph_task->cpu_ready_queue_, base_owner)
+                ->push(NodeTask(local_graph_task, nullptr, InputBuffer(0)));
+    
+    ```
 
 
     tip:
