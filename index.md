@@ -218,7 +218,7 @@ auto Engine::execute(const edge_list& roots,
 ```
 
 
-1.Local ready queue
+1. Local ready queue
 
     A fresh first time Engine::execute call should start on the CPU device, initialize a new thread local ready queue on CPU or reuse the existing one (if there is one allocated already, i.e. consecutive backward calls)
 
