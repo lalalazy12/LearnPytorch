@@ -370,7 +370,36 @@ auto Engine::execute(const edge_list& roots,
     ```
 
     1. Initialize thread pool and prepare queue.
-        
+
+         ```
+         void Engine::initialize_device_threads_pool() {
+          std::call_once(start_device_threads_flag_, &Engine::start_device_threads, this); 
+ 
+        auto Engine::start_device_threads() -> void {
+          //Get num_devices
+          for (const auto& impl_atomic : c10::impl::device_guard_impl_registry) {
+            auto* impl = impl_atomic.load();
+            if (impl) {
+              num_devices = std::max(num_devices, impl->deviceCount());
+            }
+          }
+
+          //----------------------(1)----------------------
+          device_ready_queues_ = std::vector<std::shared_ptr<ReadyQueue>>(num_devices);
+          for (auto& queue : device_ready_queues_)    {
+            // NOLINTNEXTLINE(modernize-make-shared)
+            queue.reset(new ReadyQueue());
+          }
+
+          //----------------------(2)----------------------
+          for (const auto i : c10::irange(num_devices)) {
+            std::thread t(&Engine::thread_init, this, i, device_ready_queues_[i], true);
+            t.detach();
+          }
+        ```
+        (1). Create ReadyQueue instance for each thread, and put them into device_ready_queue.
+
+        (2). In the for loop, `num_threads` threads are constructed through `std::thread` and they are deliberately run independently through `t.detach()`. In addition, we noticed that `this` pointer was passed in when creating new thread. This pointer points to the current engine instance. Since all threads share the same engine instance, so they can transfer data to each other. 
 
 
         CPU ready queue is per GraphTask, but CUDA device ready queues are shared across all graph tasks
