@@ -151,14 +151,87 @@ for(const auto i : c10::irange(num_tensors)) {
   
 2. Engine.execute()
 
-  ```
-  variable_list PythonEngine::execute(const edge_list& roots, const variable_list& inputs,
-    bool keep_graph, bool create_graph, bool accumulate_grad, const edge_list& outputs) {
-      return Engine::execute(roots, inputs, keep_graph, create_graph, accumulate_grad, outputs);
-    }
- 
-  
-  ```
+    ```
+    variable_list PythonEngine::execute(const edge_list& roots, const variable_list& inputs,
+      bool keep_graph, bool create_graph, bool accumulate_grad, const edge_list& outputs) {
+        return Engine::execute(roots, inputs, keep_graph, create_graph, accumulate_grad, outputs);
+      }
+    ```
+### Engine::execute
+
+```
+auto Engine::execute(const edge_list& roots,
+                  const variable_list& inputs,
+                  bool keep_graph,
+                  bool create_graph,
+                  bool accumulate_grad,
+                  const edge_list& outputs) -> variable_list {
+
+  //---------------------------1-------------------------------
+  validate_outputs(roots, const_cast<variable_list&>(inputs), [](const std::string& msg) {
+    return msg;
+  });
+
+  // A fresh first time Engine::execute call should start on the CPU device, initialize
+  init_local_ready_queue();
+  bool not_reentrant_backward_call = worker_device == NO_DEVICE;??
+              //------------tip 1-----------
+  auto graph_task = std::make_shared<GraphTask>(
+      /* keep_graph */ keep_graph,
+      /* create_graph */ create_graph,
+      /* depth */ not_reentrant_backward_call ? 0 : total_depth + 1,
+      /* cpu_ready_queue */ local_ready_queue);
+
+  // If we receive a single root, skip creating extra root node
+  bool skip_dummy_node = roots.size() == 1;
+  auto graph_root = skip_dummy_node ?
+    roots.at(0).function :
+    std::make_shared<GraphRoot>(roots, inputs);
+
+  auto min_topo_nr = compute_min_topological_nr(outputs);
+  // Now compute the dependencies for all executable functions
+  compute_dependencies(graph_root.get(), *graph_task, min_topo_nr);
+
+  if (!outputs.empty()) {
+    graph_task->init_to_execute(*graph_root, outputs, accumulate_grad, min_topo_nr);
+  }
+
+  // Queue the root
+  if (skip_dummy_node) {
+    InputBuffer input_buffer(roots.at(0).function->num_inputs());
+    auto input = inputs.at(0);
+
+    const auto input_stream = InputMetadata(input).stream();
+    const auto opt_next_stream = roots.at(0).function->stream(c10::DeviceType::CUDA);
+    input_buffer.add(roots.at(0).input_nr,
+                      std::move(input),
+                      input_stream,
+                      opt_next_stream);
+
+    execute_with_graph_task(graph_task, graph_root, std::move(input_buffer));
+  } else {
+    execute_with_graph_task(graph_task, graph_root, InputBuffer(variable_list()));
+  }
+  // Avoid a refcount bump for the Future, since we check for refcount in
+  // DistEngine (see TORCH_INTERNAL_ASSERT(futureGrads.use_count() == 1)
+  // in dist_engine.cpp).
+  auto& fut = graph_task->future_result_;
+  fut->wait();
+  return fut->value().toTensorVector();
+}
+```
+
+
+1.Local ready queue
+  A fresh first time Engine::execute call should start on the CPU device, initialize a new thread local ready queue on CPU or reuse the existing one (if there is one allocated already, i.e. consecutive backward calls)
+  1. Graph task
+
+
+
+    tip:
+    1.make_shared
+      [make_shared V.S. shared_ptr](https://www.jianshu.com/p/03eea8262c11)
+
 
   To understand the reentrant backwards problem, we have to notice two aspects of how the autograd engine is implemented today:
 
@@ -170,6 +243,8 @@ for(const auto i : c10::irange(num_tensors)) {
 
 
 
+
+[reference](https://zhuanlan.zhihu.com/p/336599887)
 
 
 
