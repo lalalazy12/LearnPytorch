@@ -94,17 +94,19 @@ for(const auto i : c10::irange(num_tensors)) {
         }
     }
     ```
-3. grads???
+3. grads
 
      `grads = None` by default, however if you call loss.backward(gradient = torch.rand([x,x...x])), it would saves gradient tensor 
 
 
 ```
-??????
+???
   std::vector<Edge> output_edges;
   if (inputs != nullptr) {
     int num_inputs = PyTuple_GET_SIZE(inputs);
     output_edges.reserve(num_inputs);
+
+    // Here we will not step into this loop, since num_inputs=0
     for (const auto i : c10::irange(num_inputs)) {
       PyObject *input = PyTuple_GET_ITEM(inputs, i);
       const auto& tensor = THPVariable_Unpack(input);
@@ -117,11 +119,6 @@ for(const auto i : c10::irange(num_tensors)) {
         tensor.retain_grad();
       }
       if (!grad_fn) {
-        // NOTE [ Autograd Unreachable Input ]
-        // Since input has no grad_accumulator, its guaranteed to be unreachable.
-        // We initialize an edge pointing to a non-nullptr Node so nodes in the graph
-        // (e.g., mul when an operand is scalar) that have edges pointing to nullptr
-        // don't get erroneously assigned `needed = True` in exec_info.
         output_edges.emplace_back(std::make_shared<Identity>(), 0);
       } else {
         output_edges.emplace_back(grad_fn, output_nr);
@@ -131,19 +128,6 @@ for(const auto i : c10::irange(num_tensors)) {
 
 
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -168,24 +152,10 @@ for(const auto i : c10::irange(num_tensors)) {
 2. Engine.execute()
 
   ```
-  variable_list PythonEngine::execute(
-    const edge_list& roots,
-    const variable_list& inputs,
-    bool keep_graph,
-    bool create_graph,
-    bool accumulate_grad,
-    const edge_list& outputs) {
-  TORCH_CHECK(!PyGILState_Check(), "The autograd engine was called while holding the GIL. If you are using the C++ "
-                                   "API, the autograd engine is an expensive operation that does not require the "
-                                   "GIL to be held so you should release it with 'pybind11::gil_scoped_release no_gil;'"
-                                   ". If you are not using the C++ API, please report a bug to the pytorch team.")
-  try {
-    return Engine::execute(roots, inputs, keep_graph, create_graph, accumulate_grad, outputs);
-  } catch (python_error& e) {
-    e.restore();
-    throw;
-  }
-}
+  variable_list PythonEngine::execute(const edge_list& roots, const variable_list& inputs,
+    bool keep_graph, bool create_graph, bool accumulate_grad, const edge_list& outputs) {
+      return Engine::execute(roots, inputs, keep_graph, create_graph, accumulate_grad, outputs);
+    }
  
   
   ```
