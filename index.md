@@ -238,7 +238,7 @@ auto Engine::execute(const edge_list& roots,
       }
       ```
 
-    -ReadyQueue
+    -`ReadyQueue`
 
       ReadyQueue uses priority queue to maintain NodeTasks.
       ```
@@ -249,14 +249,14 @@ auto Engine::execute(const edge_list& roots,
           ...};
       ```
 
-2.GraphTask 
+2. GraphTask 
 
-  GraphTask holds metadata needed for execution of backward(), e.g: local_ready_queue.
-  ```
-  struct GraphTask: std::enable_shared_from_this<GraphTask> {
-    std::shared_ptr<ReadyQueue> cpu_ready_queue_;
-  ```
-  CPU threads are dedicated to processing CPU work for the backward they invoked. So any given graph task maintains its own cpu_ready_queue_ where you should send work for it to be done. We memoize the cpu_ready_queue_ per GraphTask so that we know which ready queue we should push to if we are on device thread (i.e. GPU) and but next NodeTask should be run on CPU.
+    GraphTask holds metadata needed for execution of backward(), e.g: local_ready_queue.
+    ```
+    struct GraphTask: std::enable_shared_from_this<GraphTask> {
+      std::shared_ptr<ReadyQueue> cpu_ready_queue_;
+    ```
+    CPU threads are dedicated to processing CPU work for the backward they invoked. So any given graph task maintains its own cpu_ready_queue_ where you should send work for it to be done. We memoize the cpu_ready_queue_ per GraphTask so that we know which ready queue we should push to if we are on device thread (i.e. GPU) and but next NodeTask should be run on CPU.
 
 
 
