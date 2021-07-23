@@ -225,7 +225,7 @@ auto Engine::execute(const edge_list& roots,
     A fresh first time Engine::execute call should start on the CPU device, initialize a new thread local ready queue on CPU or reuse the existing one (if there is one allocated already, i.e. consecutive backward calls)
 
 
-    -`init_local_ready_queue()`
+    1. `init_local_ready_queue()`
     
 
       ```
@@ -240,7 +240,7 @@ auto Engine::execute(const edge_list& roots,
       }
       ```
 
-    -`ReadyQueue`
+    2. `ReadyQueue`
 
       ReadyQueue uses priority queue to maintain NodeTasks.
       ```
@@ -250,6 +250,16 @@ auto Engine::execute(const edge_list& roots,
           std::priority_queue<NodeTask, std::vector<NodeTask>, CompareNodeTaskTime> heap_;
           ...};
       ```
+    3. NodeTask
+        ```
+        struct NodeTask {
+              std::weak_ptr<GraphTask> base,
+              std::shared_ptr<Node> fn,
+              InputBuffer inputs,
+              bool isShutdownTask = false)
+        };
+        ```
+        inputs buffer: Once all the dependencies are finished, we use the contents of this buffer to run the function.
 
 2. GraphTask 
 
@@ -432,6 +442,7 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
           // Scope this block of execution since NodeTask is not needed after this
           // block and can be deallocated (release any references to grad tensors
           // as part of inputs_).
+          //---------------------------1-------------------------------
           NodeTask task = local_ready_queue->pop();
           // This will only work if the worker is running a non backward task
           // TODO Needs to be fixed this to work in all cases
