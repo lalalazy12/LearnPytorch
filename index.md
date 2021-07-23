@@ -222,44 +222,44 @@ auto Engine::execute(const edge_list& roots,
 
 1. Local ready queue
 
-    A fresh first time Engine::execute call should start on the CPU device, initialize a new thread local ready queue on CPU or reuse the existing one (if there is one allocated already, i.e. consecutive backward calls)
+      A fresh first time Engine::execute call should start on the CPU device, initialize a new thread local ready queue on CPU or reuse the existing one (if there is one allocated already, i.e. consecutive backward calls)
 
 
-    1. `init_local_ready_queue()`
-    
+      1. `init_local_ready_queue()`
+      
 
-      ```
-      void Engine::init_local_ready_queue(std::shared_ptr<ReadyQueue> ready_queue) {
-        if (ready_queue) {
-          // if ready_queue provided in the caller, use the caller's ready_queue to initialize local_ready_queue
-          local_ready_queue = std::move(ready_queue);
-        } else if (!local_ready_queue){
-          // otherwise if local_ready_queue not allocated, allocate a new ready_queue
-          local_ready_queue = std::make_shared<ReadyQueue>();
+        ```
+        void Engine::init_local_ready_queue(std::shared_ptr<ReadyQueue> ready_queue) {
+          if (ready_queue) {
+            // if ready_queue provided in the caller, use the caller's ready_queue to initialize local_ready_queue
+            local_ready_queue = std::move(ready_queue);
+          } else if (!local_ready_queue){
+            // otherwise if local_ready_queue not allocated, allocate a new ready_queue
+            local_ready_queue = std::make_shared<ReadyQueue>();
+          }
         }
-      }
-      ```
-
-    2. `ReadyQueue`
-
-      ReadyQueue uses priority queue to maintain NodeTasks.
-      ```
-      struct ReadyQueue {
-        private:
-          ...
-          std::priority_queue<NodeTask, std::vector<NodeTask>, CompareNodeTaskTime> heap_;
-          ...};
-      ```
-    3. NodeTask
         ```
-        struct NodeTask {
-              std::weak_ptr<GraphTask> base,
-              std::shared_ptr<Node> fn,
-              InputBuffer inputs,
-              bool isShutdownTask = false)
-        };
+
+      2. `ReadyQueue`
+
+        ReadyQueue uses priority queue to maintain NodeTasks.
         ```
-        inputs buffer: Once all the dependencies are finished, we use the contents of this buffer to run the function.
+        struct ReadyQueue {
+          private:
+            ...
+            std::priority_queue<NodeTask, std::vector<NodeTask>, CompareNodeTaskTime> heap_;
+            ...};
+        ```
+      3. NodeTask
+          ```
+          struct NodeTask {
+                std::weak_ptr<GraphTask> base,
+                std::shared_ptr<Node> fn,
+                InputBuffer inputs,
+                bool isShutdownTask = false)
+          };
+          ```
+          inputs buffer: Once all the dependencies are finished, we use the contents of this buffer to run the function.
 
 2. GraphTask 
 
