@@ -444,51 +444,32 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
           // as part of inputs_).
           //---------------------------1-------------------------------
           NodeTask task = local_ready_queue->pop();
-          // This will only work if the worker is running a non backward task
-          // TODO Needs to be fixed this to work in all cases
-          if (task.isShutdownTask_) {
-            C10_LOG_API_USAGE_ONCE("torch.autograd.thread_shutdown");
-            break;
-          }
 
           if (!(local_graph_task = task.base_.lock())) {
             // GraphTask for function is no longer valid, skipping further
-            // execution.
-            continue;
-          }
+            continue;}
 
           if (task.fn_ && !local_graph_task->has_error_.load()) {
             AutoGradMode grad_mode(local_graph_task->grad_mode_);
             try {
-              // The guard sets the thread_local current_graph_task on construction
-              // and restores it on exit. The current_graph_task variable helps
-              // queue_callback() to find the target GraphTask to append final
-              // callbacks.
-              GraphTaskGuard guard(local_graph_task);
-              NodeGuard ndguard(task.fn_);
-              evaluate_function(local_graph_task, task.fn_.get(), task.inputs_, local_graph_task->cpu_ready_queue_);
+          //---------------------------2-------------------------------
+              evaluate_function(local_graph_task, task.fn_.get(), task.inputs_,  
+                                        local_graph_task->cpu_ready_queue_);
             } catch (std::exception& e) {
-              thread_on_exception(local_graph_task, task.fn_, e);
-            }
-          }
-        }
+              thread_on_exception(local_graph_task, task.fn_, e);}}}
 
+          //---------------------------3-------------------------------
         // Decrement the outstanding tasks.
         --local_graph_task->outstanding_tasks_;
 
+          //---------------------------4-------------------------------
         // Check if we've completed execution.
         if (local_graph_task->completed()) {
           local_graph_task->mark_as_completed_and_run_post_processing();
 
           auto base_owner = local_graph_task->owner_;
-          // The current worker thread finish the graph_task, but the owning thread
-          // of the graph_task might be sleeping on pop() if it does not have work.
-          // So we need to send a dummy function task to the owning thread just to
-          // ensure that it's not sleeping, so that we can exit the thread_main.
-          // If it has work, it might see that graph_task->outstanding_tasks_ == 0
-          // before it gets to the task, but it's a no-op anyway.
-          //
-          // NB: This is not necessary if the current thread is the owning thread.
+
+          //---------------------------4-------------------------------
           if (worker_device != base_owner) {
             // Synchronize outstanding_tasks_ with queue mutex
             std::atomic_thread_fence(std::memory_order_release);
@@ -496,54 +477,38 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
                 ->push(NodeTask(local_graph_task, nullptr, InputBuffer(0)));
     
     ```
+    1. Continuously take tasks (`NodeTask`) from the `local_ready_queue` in the loop.
+    2. `evaluate_function`
+        Call `evaluate_function` to execute the NodeTask instance.
+    3. Reduce the outstanding_tasks_ of GraphTask corresponding to NodeTask took out in 1
+    4. 
+
+        The current worker thread finish the `graph_task`, but the owning thread of the `graph_task` might be sleeping on `pop()` if it does not have work. So we need to send a dummy function task to the owning thread just to ensure that it's not sleeping, so that we can exit the `thread_main`. If it has work, it might see that `graph_task->outstanding_tasks_ == 0` before it gets to the task. NB: This is not necessary if the current thread is the owning thread.
+
+tip:
+1. make_shared
+  [make_shared V.S. shared_ptr](https://www.jianshu.com/p/03eea8262c11)
 
 
-    tip:
-    1. make_shared
-      [make_shared V.S. shared_ptr](https://www.jianshu.com/p/03eea8262c11)
+2. To understand the [reentrant](https://www.cnblogs.com/clover-toeic/p/3738464.html) backwards problem, we have to notice two aspects of how the autograd engine is implemented today:
 
-
-    2. To understand the [reentrant](https://www.cnblogs.com/clover-toeic/p/3738464.html) backwards problem, we have to notice two aspects of how the autograd engine is implemented today:
-
-        1. When you call Engine::execute(), you want to block until differentiation finishes so that you can get the final result variables of the backwards pass.
-        2. The engine operates by having a single worker thread per work queue, and every work queue is pinned to a specific device where the operation is executed.
-    3. [thread pool](https://wiki.jikexueyuan.com/project/cplusplus-concurrency-action/content/chapter9/9.1-chinese.html)
-
-
-
-
-
-
-
-[reference](https://zhuanlan.zhihu.com/p/336599887)
-
+    1. When you call Engine::execute(), you want to block until differentiation finishes so that you can get the final result variables of the backwards pass.
+    2. The engine operates by having a single worker thread per work queue, and every work queue is pinned to a specific device where the operation is executed.
+3. [thread pool](https://wiki.jikexueyuan.com/project/cplusplus-concurrency-action/content/chapter9/9.1-chinese.html)
 
 
 
-```markdown
-Syntax highlighted code block
 
-# Header 1
-## Header 2
-### Header 3
 
-- Bulleted
-- List
 
-1. Numbered
-2. List
+###Reference
 
-**Bold** and _Italic_ and `Code` text
+1. [PyTorch Internals 5：Autogradreference](https://zhuanlan.zhihu.com/p/336599887)
+2. [autograd源码剖析](https://zhuanlan.zhihu.com/p/336599887)
+3. [Pytorch Internals](http://blog.ezyang.com/2019/05/pytorch-internals/)
+4. [PyTorch源码浅析(4)：Autograd](https://www.52coding.com.cn/2019/05/05/PyTorch4/#autograd-engine)
+5. [A Tour of PyTorch Internals (Part I)](https://pytorch.org/blog/a-tour-of-pytorch-internals-1/)
 
-[Link](url) and ![Image](src)
-```
 
-For more details see [GitHub Flavored Markdown](https://guides.github.com/features/mastering-markdown/).
 
-### Jekyll Themes
 
-Your Pages site will use the layout and styles from the Jekyll theme you have selected in your [repository settings](https://github.com/lalalazy12/LearnPytorch/settings/pages). The name of this theme is saved in the Jekyll `_config.yml` configuration file.
-
-### Support or Contact
-
-Having trouble with Pages? Check out our [documentation](https://docs.github.com/categories/github-pages-basics/) or [contact support](https://support.github.com/contact) and we’ll help you sort it out.
