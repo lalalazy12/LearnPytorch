@@ -267,6 +267,18 @@ auto Engine::execute(const edge_list& roots,
     ```
     struct GraphTask: std::enable_shared_from_this<GraphTask> {
       std::shared_ptr<ReadyQueue> cpu_ready_queue_;
+
+      std::atomic<uint64_t> outstanding_tasks_{0};
+      std::atomic_bool future_completed_{false};
+      // It is safe to read grad_mode_ and keep_graph_ without synchronization
+      bool keep_graph_;
+      bool grad_mode_;
+
+      // To protect reads/writes to not_ready_, dependencies_, captured_vars_,
+      // has_error_, future_result_, cpu_ready_queue_, and leaf_streams.
+      std::mutex mutex_;
+      std::unordered_map<Node*, InputBuffer> not_ready_;
+      std::unordered_map<Node*, int> dependencies_;
     ```
     CPU threads are dedicated to processing CPU work for the backward they invoked. So any given graph task maintains its own cpu_ready_queue_ where you should send work for it to be done. We memoize the cpu_ready_queue_ per GraphTask so that we know which ready queue we should push to if we are on device thread (i.e. GPU) and but next NodeTask should be run on CPU.
 
@@ -299,8 +311,23 @@ auto Engine::execute(const edge_list& roots,
             if (was_inserted) queue.push_back(next_ptr);
     ```
     Dependencies is a member variable in GraphTask, the type: `std::unordered_map<Node*, int> dependencies_;`. After executing the above function, the number of keys in the dependencies is the same as the number of Nodes in the calculation graph, and the dependencies corresponding to each node can be regarded as the out-degree of the node in the forward calculation graph.
+4. InputBuffer
+    ```
+    struct InputBuffer {
+      explicit InputBuffer(size_t size)
+        : buffer(size) {}
+      InputBuffer(const InputBuffer& other) = delete;
+      InputBuffer(InputBuffer&& other) = default;
+      explicit InputBuffer(variable_list&& inputs): buffer(std::move(inputs)) {};
 
-4. `execute_with_graph_task`
+      void add(size_t pos,
+              Variable&& var,
+              const c10::optional<c10::Stream>& opt_producer_stream,
+              const c10::optional<c10::Stream>& opt_consumer_stream);
+    ```
+    What is `add`: Accumulates the variable at a specified index. The optional CUDA streams determine which stream the accumulation is run on and how the addition is synchronized.
+
+5. `execute_with_graph_task`
 
 ### Execute with Graph Task
 ```
@@ -479,7 +506,14 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
     ```
     1. Continuously take tasks (`NodeTask`) from the `local_ready_queue` in the loop.
     2. `evaluate_function`
-        Call `evaluate_function` to execute the NodeTask instance.
+        Call `evaluate_function` to execute the NodeTask instance. This function receives NodeTask, the NodeTask saves the derivative calculation function `fn_` of this Node and the gradient before the current Node in the chain.
+        ```
+        
+        ```
+
+
+
+
     3. Reduce the outstanding_tasks_ of GraphTask corresponding to NodeTask took out in 1
     4. 
 
