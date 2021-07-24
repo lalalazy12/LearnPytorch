@@ -497,7 +497,7 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
 
           auto base_owner = local_graph_task->owner_;
 
-          //---------------------------4-------------------------------
+          //---------------------------5-------------------------------
           if (worker_device != base_owner) {
             // Synchronize outstanding_tasks_ with queue mutex
             std::atomic_thread_fence(std::memory_order_release);
@@ -575,8 +575,8 @@ void Engine::evaluate_function(
     if (it == dependencies.end()) {
       auto name = next.function->name();
       throw std::runtime_error(std::string("dependency not found for ") + name);
-    } else if (--it->second == 0) {
     //---------------------------4-------------------------------
+    } else if (--it->second == 0) {
       dependencies.erase(it);
       is_ready = true;
     }
@@ -591,10 +591,7 @@ void Engine::evaluate_function(
 
       // Accumulates into buffer
       const auto opt_next_stream = next.function->stream(c10::DeviceType::CUDA);
-      input_buffer.add(next.input_nr,
-                       std::move(output),
-                       opt_parent_stream,
-                       opt_next_stream);
+      input_buffer.add(next.input_nr,std::move(output),opt_parent_stream,opt_next_stream);
 
     //---------------------5.2---------------------
       if (is_ready) {
@@ -619,13 +616,8 @@ void Engine::evaluate_function(
         auto queue = ready_queue(cpu_ready_queue, input_buffer.device());
         queue->push(
             NodeTask(graph_task, next.function, std::move(input_buffer)));
-        not_ready.erase(not_ready_it);
-      }
-    }
-  }
-}
-        
-        ```
+        not_ready.erase(not_ready_it);}}}}
+```
 
 1. Function's Stream
   A function's stream (for a given device type) is the stream of the first element of its input buffer on a device of that type. If all elements are on the same device they MUST share a stream. If elements are on different devices (across multiple GPUs, for example) they may have different streams.
@@ -649,14 +641,92 @@ void Engine::evaluate_function(
   c. during exec_post_processing, for each leaf stream, sync the remembered current streams (on the leaf stream's device) with that leaf stream.
 2. Hook function: execute a hook function attached with a variable in inputs. (inputs of gradient funciton)
 
-3. Call function to execute grad_fn, see next chapter
+3. Call function to execute grad_fn, see next chapter: call_function
 
-4. After `grad_fn`
+4. After `grad_fn`, reduce dependencies
     After finishing the `call_function`, we get the gradient for this function, and through the edge, we can find next function in the graph, so we have to decrease the dependencies for next function.
-    
-5. set    
     if the dependencies of next function equals to 0, we can set it as ready, so it can be executed with all inputs ready, if we do not reduce the dependencies and check dependencies, the next function may find no input when it is executed.
+    
+5. Prepare next `NodeTask` 
 
+    5.1: If `next.function` has not put into `not_ready`,which alse means no buffers have been allocated for the `next_function`, so allocate an input buffer for it and accumulate all the inputs by `input_buffer.add(next.input_nr,std::move(output),opt_parent_stream,opt_next_stream)`.
+
+        In `add`, choose device (and stream) for accumulation function: 
+        (1) var is not a CUDA variable. Accumulation happens on var's device.
+        (2) var is a CUDA variable and it, the consumer, and the producer share the same device:
+            (2a) Uses the consumer's stream as the accumulation stream
+            (2b) Syncs the accumulation stream with the producer's stream (if different)
+            (2c) Accumulates.
+        (3) var is a CUDA variable and it shares a device with the consumer but not the producer:
+            (3a) Uses the consumer's stream as the accumulation stream
+            (3b) Syncs the accumulation stream with the consumer device's default stream
+            (3c) Accumulates.
+        (4) var is a CUDA variable and it shares a device with the producer but not the consumer:
+            (4a) Uses the producer device's default stream as the accumulation stream
+            (4b) Syncs the accumulation stream with the the producer's stream
+            (4c) Accumulates.
+        (5) var is a CUDA variable and it does not share a device with the consumer or producer.
+            Accumulation happens on the var device's default stream. 
+        Then call `accumulate(buffer, pos, std::move(var))`
+
+    5.2: If next.function is ready, put a new NodeTask into `ready_queue`, else put the function inot `not_ready`.
+
+    5.3: If `next.function` has been put into `not_ready`, it already has a buffer. Again accumulate input_buffer and check if the function is ready or not
+
+### `call_function`
+
+```
+static variable_list call_function(
+    std::shared_ptr<GraphTask>& graph_task,
+    Node* func,
+    InputBuffer& inputBuffer) {
+  CheckpointValidGuard cpvguard(graph_task);
+  auto& fn = *func;
+  auto inputs =
+      call_pre_hooks(fn, InputBuffer::variables(std::move(inputBuffer)));
+
+  if (!graph_task->keep_graph_) {
+    fn.will_release_variables();
+  }
+
+  const auto has_post_hooks = !fn.post_hooks().empty();
+  variable_list outputs;
+
+  if (has_post_hooks) {
+    // In functions/accumulate_grad.cpp, there is some logic to check the
+    // conditions under which the incoming gradient can be stolen directly
+    // (which elides a deep copy) instead of cloned. One of these conditions
+    // is that the incoming gradient's refcount must be 1 (nothing else is
+    // referencing the same data).  Stashing inputs_copy here bumps the
+    // refcount, so if post hooks are employed, it's actually still ok for
+    // accumulate_grad.cpp to steal the gradient if the refcount is 2.
+    //
+    // "new_grad.use_count() <= 1 + !post_hooks().empty()" in
+    // accumulate_grad.cpp accounts for this, but also creates a silent
+    // dependency between engine.cpp (ie, this particular engine
+    // implementation) and accumulate_grad.cpp.
+    //
+    // If you change the logic here, make sure it's compatible with
+    // accumulate_grad.cpp.
+    auto inputs_copy = inputs;
+    outputs = fn(std::move(inputs_copy));
+  } else {
+    outputs = fn(std::move(inputs));
+  }
+
+  validate_outputs(fn.next_edges(), outputs, [&](const std::string& msg) {
+    std::ostringstream ss;
+    ss << "Function "  << fn.name() << " returned an " << msg;
+    return ss.str();
+  });
+
+  if(has_post_hooks){
+    // NOLINTNEXTLINE(bugprone-use-after-move)
+    return call_post_hooks(fn, std::move(outputs), inputs);
+  }
+  return outputs;
+}
+```
           
 
 tip:
