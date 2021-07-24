@@ -508,18 +508,24 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
     1. Continuously take tasks (`NodeTask`) from the `local_ready_queue` in the loop.
     2. `evaluate_function`
         Call `evaluate_function` to execute the NodeTask instance. This function receives NodeTask, the NodeTask saves the derivative calculation function `fn_` of this Node and the gradient before the current Node in the chain.
-        ```
-        void Engine::evaluate_function(
-    std::shared_ptr<GraphTask>& graph_task,
-    Node* func,
-    InputBuffer& inputs,
-    const std::shared_ptr<ReadyQueue>& cpu_ready_queue) {
+    3. Reduce the outstanding_tasks_ of GraphTask corresponding to NodeTask took out in 1
+    4. 
+        The current worker thread finish the `graph_task`, but the owning thread of the `graph_task` might be sleeping on `pop()` if it does not have work. So we need to send a dummy function task to the owning thread just to ensure that it's not sleeping, so that we can exit the `thread_main`. If it has work, it might see that `graph_task->outstanding_tasks_ == 0` before it gets to the task. NB: This is not necessary if the current thread is the owning thread.
+
+### Evaluate function
+
+```
+void Engine::evaluate_function(
+  std::shared_ptr<GraphTask>& graph_task,
+  Node* func,
+  InputBuffer& inputs,
+  const std::shared_ptr<ReadyQueue>& cpu_ready_queue) {
 
   // The InputBuffer::adds that supplied incoming grads took pains to
   // ensure they're safe to consume in the context of the present
   // func's stream (if applicable). So we guard onto that stream
   // before working with the grads in any capacity.
-  //---------------------------(1)-------------------------------
+  //---------------------------1-------------------------------
   const auto opt_parent_stream = (*func).stream(c10::DeviceType::CUDA);
 
   // If exec_info_ is not empty, we have to instrument the execution
@@ -533,32 +539,19 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
         auto& captured_grad = graph_task->captured_vars_[capture.output_idx_];
         captured_grad = inputs[capture.input_idx_];
         for (auto& hook : capture.hooks_) {
-  //---------------------------(2)-------------------------------
+  //---------------------------2-------------------------------
           captured_grad = (*hook)(captured_grad);
         }
         if (opt_parent_stream) {
-          // No need to take graph_task->mutex_ here, we already hold it
-          graph_task->leaf_streams.emplace(*opt_parent_stream);
-        }
-      }
-    }
-    if (!fn_info.needed_) {
-      // Skip execution if we don't need to execute the function.
-      return;
-    }
-  }
+          graph_task->leaf_streams.emplace(*opt_parent_stream);}}}
 
+  //---------------------------3-------------------------------
   auto outputs = call_function(graph_task, func, inputs);
 
-  auto& fn = *func;
-  if (!graph_task->keep_graph_) {
-    fn.release_variables();
-  }
 
   int num_outputs = outputs.size();
   if (num_outputs == 0) { // Note: doesn't acquire the mutex
     // Records leaf stream (if applicable)
-    // See Note [Streaming backwards]
     if (opt_parent_stream) {
       std::lock_guard<std::mutex> lock(graph_task->mutex_);
       graph_task->leaf_streams.emplace(*opt_parent_stream);
@@ -566,26 +559,13 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
     return;
   }
 
-  if (AnomalyMode::is_enabled()) {
-    AutoGradMode grad_mode(false);
-    for (const auto i : c10::irange(num_outputs)) {
-      auto& output = outputs[i];
-      at::OptionalDeviceGuard guard(device_of(output));
-      if (output.defined() && isnan(output).any().item<uint8_t>()) {
-        std::stringstream ss;
-        ss << "Function '" << fn.name() << "' returned nan values in its " << i << "th output.";
-        throw std::runtime_error(ss.str());
-      }
-    }
-  }
 
+  auto& fn = *func;
   // Lock mutex for the accesses to GraphTask dependencies_, not_ready_ and cpu_ready_queue_ below
   std::lock_guard<std::mutex> lock(graph_task->mutex_);
   for (const auto i : c10::irange(num_outputs)) {
     auto& output = outputs[i];
     const auto& next = fn.next_edge(i);
-
-    if (!next.is_valid()) continue;
 
     // Check if the next function is ready to be computed
     bool is_ready = false;
@@ -596,20 +576,16 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
       auto name = next.function->name();
       throw std::runtime_error(std::string("dependency not found for ") + name);
     } else if (--it->second == 0) {
+    //---------------------------4-------------------------------
       dependencies.erase(it);
       is_ready = true;
     }
 
+    //---------------------------5-------------------------------
     auto& not_ready = graph_task->not_ready_;
     auto not_ready_it = not_ready.find(next.function.get());
     if (not_ready_it == not_ready.end()) {
-      // Skip functions that aren't supposed to be executed
-      if (!exec_info_.empty()) {
-        auto it = exec_info_.find(next.function.get());
-        if (it == exec_info_.end() || !it->second.should_execute()) {
-          continue;
-        }
-      }
+    //---------------------5.1---------------------
       // No buffers have been allocated for the function
       InputBuffer input_buffer(next.function->num_inputs());
 
@@ -620,6 +596,7 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
                        opt_parent_stream,
                        opt_next_stream);
 
+    //---------------------5.2---------------------
       if (is_ready) {
         auto queue = ready_queue(cpu_ready_queue, input_buffer.device());
         queue->push(
@@ -628,6 +605,7 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
         not_ready.emplace(next.function.get(), std::move(input_buffer));
       }
     } else {
+    //---------------------5.3---------------------
       // The function already has a buffer
       auto &input_buffer = not_ready_it->second;
 
@@ -649,37 +627,41 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
         
         ```
 
-        (1). Function's StreamStream
-            A function's stream (for a given device type) is the stream of the first element of its input buffer on a device of that type. If all elements are on the same device they MUST share a stream. If elements are on different devices (across multiple GPUs, for example) they may have different streams.
-            ``` 
-            c10::optional<c10::Stream> stream(const c10::DeviceType device_type) {
-              for (const auto& metadata : input_metadata_) {
-                if (metadata.device().type() == device_type) return metadata.stream();}
-              return c10::nullopt;}
-            ```
-            Note for Streaming backwards:
-            On CUDA devices the autograd engine's device operations are run on the same stream that ran them in forward. This requires automatically syncing the streams so that function A finishes producing its output before function B consumes it.
-            This synchronization occurs when outputs are placed into input buffers. The functions corresponding to input buffer positions have metadata recording their streams from forward, and during backward this data is used to sync the producer's stream with the consumer's.
+1. Function's Stream
+  A function's stream (for a given device type) is the stream of the first element of its input buffer on a device of that type. If all elements are on the same device they MUST share a stream. If elements are on different devices (across multiple GPUs, for example) they may have different streams.
+  ``` 
+  c10::optional<c10::Stream> stream(const c10::DeviceType device_type) {
+    for (const auto& metadata : input_metadata_) {
+      if (metadata.device().type() == device_type) return metadata.stream();}
+    return c10::nullopt;}
+  ```
+  Note for Streaming backwards:
+  On CUDA devices the autograd engine's device operations are run on the same stream that ran them in forward. This requires automatically syncing the streams so that function A finishes producing its output before function B consumes it.
+  This synchronization occurs when outputs are placed into input buffers. The functions corresponding to input buffer positions have metadata recording their streams from forward, and during backward this data is used to sync the producer's stream with the consumer's.
 
-            When all the inputs of a CUDA function were on the stream used to run this function, or the inputs are on different devices, the function is responsible for properly acquiring them.
-            
-            See [Stream semantics of backward passes](https://pytorch.org/docs/stable/notes/cuda.html)
+  When all the inputs of a CUDA function were on the stream used to run this function, or the inputs are on different devices, the function is responsible for properly acquiring them.
+  
+  See [Stream semantics of backward passes](https://pytorch.org/docs/stable/notes/cuda.html)
 
-            So GraphTask achieves the above semantics by
-            a.remembering the current streams on all active CUDA devices in the user-facing thread (aka, the thread that called execute() to launch the GraphTask)
-            b.remembering the "leaf streams" (streams each backward leaf node ran on)
-            c. during exec_post_processing, for each leaf stream, sync the remembered current streams (on the leaf stream's device) with that leaf stream.
-        (2). Hook function: execute a hook function attached with a variable in inputs. (inputs of gradient funciton)
+  So GraphTask achieves the above semantics by
+  a.remembering the current streams on all active CUDA devices in the user-facing thread (aka, the thread that called execute() to launch the GraphTask)
+  b.remembering the "leaf streams" (streams each backward leaf node ran on)
+  c. during exec_post_processing, for each leaf stream, sync the remembered current streams (on the leaf stream's device) with that leaf stream.
+2. Hook function: execute a hook function attached with a variable in inputs. (inputs of gradient funciton)
 
-            
-    3. Reduce the outstanding_tasks_ of GraphTask corresponding to NodeTask took out in 1
-    4. 
+3. Call function to execute grad_fn, see next chapter
 
-        The current worker thread finish the `graph_task`, but the owning thread of the `graph_task` might be sleeping on `pop()` if it does not have work. So we need to send a dummy function task to the owning thread just to ensure that it's not sleeping, so that we can exit the `thread_main`. If it has work, it might see that `graph_task->outstanding_tasks_ == 0` before it gets to the task. NB: This is not necessary if the current thread is the owning thread.
+4. After `grad_fn`
+    After finishing the `call_function`, we get the gradient for this function, and through the edge, we can find next function in the graph, so we have to decrease the dependencies for next function.
+    
+5. set    
+    if the dependencies of next function equals to 0, we can set it as ready, so it can be executed with all inputs ready, if we do not reduce the dependencies and check dependencies, the next function may find no input when it is executed.
+
+          
 
 tip:
 1. make_shared
-  [make_shared V.S. shared_ptr](https://www.jianshu.com/p/03eea8262c11)
+[make_shared V.S. shared_ptr](https://www.jianshu.com/p/03eea8262c11)
 
 
 2. To understand the [reentrant](https://www.cnblogs.com/clover-toeic/p/3738464.html) backwards problem, we have to notice two aspects of how the autograd engine is implemented today:
