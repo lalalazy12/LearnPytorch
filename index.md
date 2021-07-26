@@ -163,13 +163,13 @@ auto Engine::execute(const edge_list& roots,
   // Now compute the dependencies for all executable functions
   compute_dependencies(graph_root.get(), *graph_task, min_topo_nr);
 
-  //---------------------------4-------------------------------
   if (!outputs.empty()) {
     graph_task->init_to_execute(*graph_root, outputs, accumulate_grad, min_topo_nr);
   }
 
   // Queue the root
   if (skip_dummy_node) {
+  //---------------------------4-------------------------------
     InputBuffer input_buffer(roots.at(0).function->num_inputs());
     auto input = inputs.at(0);
 
@@ -180,6 +180,7 @@ auto Engine::execute(const edge_list& roots,
                       input_stream,
                       opt_next_stream);
 
+    //---------------------------5-------------------------------
     execute_with_graph_task(graph_task, graph_root, std::move(input_buffer));
   } else {
     execute_with_graph_task(graph_task, graph_root, InputBuffer(variable_list()));
@@ -253,7 +254,7 @@ auto Engine::execute(const edge_list& roots,
       std::unordered_map<Node*, InputBuffer> not_ready_;
       std::unordered_map<Node*, int> dependencies_;
     ```
-    CPU threads are dedicated to processing CPU work for the backward they invoked. So any given graph task maintains its own cpu_ready_queue_ where you should send work for it to be done. We memoize the cpu_ready_queue_ per GraphTask so that we know which ready queue we should push to if we are on device thread (i.e. GPU) and but next NodeTask should be run on CPU.
+    CPU threads are dedicated to processing CPU work for the backward they invoked. So any given graph task maintains its own cpu_ready_queue_ where you should send work for it to be done. We memoize the cpu_ready_queue_ per GraphTask so that we know which ready queue we should push to if we are on device thread (i.e. GPU)  but next NodeTask should be run on CPU.
 
 
 3. Compute_dependecies
