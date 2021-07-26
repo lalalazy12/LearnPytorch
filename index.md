@@ -97,38 +97,10 @@ for(const auto i : c10::irange(num_tensors)) {
     ```
 3. grads
 
-     `grads = None` by default, however if you call loss.backward(gradient = torch.rand([x,x...x])), it would saves gradient tensor 
+     `grads = None` by default, it would be used to save gradient tensor 
 
 
-```
-???
-  std::vector<Edge> output_edges;
-  if (inputs != nullptr) {
-    int num_inputs = PyTuple_GET_SIZE(inputs);
-    output_edges.reserve(num_inputs);
 
-    // Here we will not step into this loop, since num_inputs=0
-    for (const auto i : c10::irange(num_inputs)) {
-      PyObject *input = PyTuple_GET_ITEM(inputs, i);
-      const auto& tensor = THPVariable_Unpack(input);
-      const auto output_nr = tensor.output_nr();
-      auto grad_fn = tensor.grad_fn();
-      if (!grad_fn) {
-        grad_fn = torch::autograd::impl::try_get_grad_accumulator(tensor);
-      }
-      if (accumulate_grad) {
-        tensor.retain_grad();
-      }
-      if (!grad_fn) {
-        output_edges.emplace_back(std::make_shared<Identity>(), 0);
-      } else {
-        output_edges.emplace_back(grad_fn, output_nr);
-      }
-    }
-  }
-
-
-```
 
 ```
   variable_list outputs;
