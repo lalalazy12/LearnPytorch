@@ -55,8 +55,8 @@ roots.reserve(num_tensors);
 variable_list grads;
 grads.reserve(num_tensors);
 for(const auto i : c10::irange(num_tensors)) {
-
-  // roots
+  // root
+  //-----------------------------2---------------------------
   auto gradient_edge = torch::autograd::impl::gradient_edge(variable);
   roots.push_back(std::move(gradient_edge));
 
@@ -70,7 +70,6 @@ for(const auto i : c10::irange(num_tensors)) {
 1. What is `edge_list`
 
     ```
-    //-----------------------------2---------------------------
     using edge_list = std::vector<Edge>;
     ```
     Edge is a struct:
@@ -83,7 +82,7 @@ for(const auto i : c10::irange(num_tensors)) {
     ```
     In Pytorch graph, each edge stores the function (`function`) that the edge points at, and it also stores index(`input_nr`) of this function, since function could have more than one input, i.e. `input_nr` indicates that this edge is which input to the function.
 
-2. gradient_edge
+2. gradient_edge()
 
     If grad_fn is null (as a leaf node),  the gradient function is a gradient accumulator, which will accumulate its inputs into the grad property of the variable. Note that only variables which have `requires_grad = True` can have gradient accumulators.
 
@@ -157,6 +156,7 @@ for(const auto i : c10::irange(num_tensors)) {
 ### Engine::execute
 
 ```
+/pytorch/torch/csrc/autograd/engine.cpp
 auto Engine::execute(const edge_list& roots,
                   const variable_list& inputs,
                   bool keep_graph,
