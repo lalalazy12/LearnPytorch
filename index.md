@@ -215,6 +215,11 @@ auto Engine::execute(const edge_list& roots,
           }
         }
         ```
+
+        Every autograd worker thread is associated with a ready queue, which specifies the stream of work of this thread to do. This `shared_ptr` is a thread_local pointer to each thread's `ready_queue`.
+
+        thread local: Variables with `thread_local` keyword have thread duration. These variables (objects) are created or allocated at the beginning of the thread, and deallocated at the end of the thread.
+
     2. `ReadyQueue`
 
         ReadyQueue uses priority queue to maintain NodeTasks.
@@ -239,7 +244,7 @@ auto Engine::execute(const edge_list& roots,
 
 2. GraphTask 
 
-    GraphTask holds metadata needed for execution of backward(), e.g: local_ready_queue.
+    GraphTask holds metadata needed for execution of backward(), e.g: `cpu_ready_queue`,(`local_ready_queue`).
     ```
     struct GraphTask: std::enable_shared_from_this<GraphTask> {
       std::shared_ptr<ReadyQueue> cpu_ready_queue_;
