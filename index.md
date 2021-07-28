@@ -41,7 +41,7 @@ static struct PyMethodDef THPEngine_methods[] = {
   {nullptr}
 };
 ```
-Now in Now in THPEngine_run_backward, we can find out what `backward()` exactly do.
+Now in THPEngine_run_backward, we can find out what `backward()` exactly do.
 ```
 PyObject *THPEngine_run_backward(PyObject *self, PyObject *args, PyObject *kwargs)
 {
@@ -67,7 +67,9 @@ for(const auto i : c10::irange(num_tensors)) {
 
 
 ```
-1. What is `edge_list`
+1. Construct `edge_list roots`
+
+    First, what is edge_list:
 
     ```
     using edge_list = std::vector<Edge>;
