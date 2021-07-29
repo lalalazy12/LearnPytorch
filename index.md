@@ -619,8 +619,11 @@ void Engine::evaluate_function(
     See [Stream semantics of backward passes](https://pytorch.org/docs/stable/notes/cuda.html)
 
     So GraphTask achieves the above semantics by
+
     a.remembering the current streams on all active CUDA devices in the user-facing thread (aka, the thread that called execute() to launch the GraphTask)
+
     b.remembering the "leaf streams" (streams each backward leaf node ran on)
+
     c. during exec_post_processing, for each leaf stream, sync the remembered current streams (on the leaf stream's device) with that leaf stream.
 2. Hook function: execute a hook function attached with a variable in inputs. (inputs of gradient funciton)
 
