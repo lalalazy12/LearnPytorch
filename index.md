@@ -611,20 +611,19 @@ void Engine::evaluate_function(
       return c10::nullopt;}
     ```
     Note for Streaming backwards:
-    On CUDA devices the autograd engine's device operations are run on the same stream that ran them in forward. This requires automatically syncing the streams so that function A finishes producing its output before function B consumes it.
-    This synchronization occurs when outputs are placed into input buffers. The functions corresponding to input buffer positions have metadata recording their streams from forward, and during backward this data is used to sync the producer's stream with the consumer's.
+    1. On CUDA devices the autograd engine's device operations are run on the same stream that ran them in forward. This requires automatically syncing the streams so that function A finishes producing its output before function B consumes it. This synchronization occurs when outputs are placed into input buffers. The functions corresponding to input buffer positions have metadata recording their streams from forward, and during backward this data is used to sync the producer's stream with the consumer's.
 
     When all the inputs of a CUDA function were on the stream used to run this function, or the inputs are on different devices, the function is responsible for properly acquiring them.
     
     See [Stream semantics of backward passes](https://pytorch.org/docs/stable/notes/cuda.html)
 
-    So GraphTask achieves the above semantics by
+    2. So GraphTask achieves the above semantics by:
 
-    a.remembering the current streams on all active CUDA devices in the user-facing thread (aka, the thread that called execute() to launch the GraphTask)
+        a.remembering the current streams on all active CUDA devices in the user-facing thread (aka, the thread that called execute() to launch the GraphTask)
 
-    b.remembering the "leaf streams" (streams each backward leaf node ran on)
+        b.remembering the "leaf streams" (streams each backward leaf node ran on)
 
-    c. during exec_post_processing, for each leaf stream, sync the remembered current streams (on the leaf stream's device) with that leaf stream.
+        c. during exec_post_processing, for each leaf stream, sync the remembered current streams (on the leaf stream's device) with that leaf stream.
 2. Hook function: execute a hook function attached with a variable in inputs. (inputs of gradient funciton)
 
 3. Call function to execute grad_fn, see next chapter: call_function
