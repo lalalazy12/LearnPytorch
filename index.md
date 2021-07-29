@@ -338,12 +338,13 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
 
     // Now that all the non-thread safe fields of the graph_task have been populated,
     // we can enqueue it.
+    //---------------------------3-------------------------------
     queue->push(NodeTask(graph_task, std::move(graph_root), std::move(input_buffer)));
 
     // The owning thread start to drive the engine execution for any CPU task that
     // was just pushed or will be added later from other worker threads
     lock.unlock();
-  //---------------------------3-------------------------------
+  //---------------------------4-------------------------------
     thread_main(graph_task);
     TORCH_INTERNAL_ASSERT(graph_task->future_result_->completed());
     // reset the worker_device after the completion of the graph_task, this is so
@@ -436,8 +437,27 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
         // See Note [Allocating GPUs to autograd threads]
         return device_ready_queues_.at(device.index());
     ```
+3. push
 
-3. 'thread_main(graph_task)' 
+    ```
+    auto ReadyQueue::push(NodeTask item, bool incrementOutstandingTasks) -> void {
+      {
+        // Lock mutex for writing to heap_
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (incrementOutstandingTasks) {
+          std::shared_ptr<GraphTask> graph_task = item.base_.lock();
+          TORCH_INTERNAL_ASSERT(graph_task, "GraphTask is no longer valid!");
+          //-------------outstanding_tasks_ ++; ------------
+          ++graph_task->outstanding_tasks_;
+        }
+        //------------heap_ is ReadyQueue------------
+        heap_.push(std::move(item));
+      }
+      not_empty_.notify_one();
+    }
+    ```
+
+4. 'thread_main(graph_task)' 
 
     ```
     auto Engine::thread_main(const std::shared_ptr<GraphTask>& graph_task) -> void {
@@ -488,11 +508,17 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
     
     ```
     1. Continuously take tasks (`NodeTask`) from the `local_ready_queue` in the loop.
-    2. `evaluate_function`
-        Call `evaluate_function` to execute the NodeTask instance. This function receives NodeTask, the NodeTask saves the derivative calculation function `fn_` of this Node and the gradient before the current Node in the chain.
+    2. Call `evaluate_function` to execute the NodeTask instance. This function receives NodeTask, the NodeTask saves the derivative calculation function `fn_` of this Node and the gradient before the current Node in the chain.
     3. Reduce the outstanding_tasks_ of GraphTask corresponding to NodeTask took out in 1
-    4. 
-        The current worker thread finish the `graph_task`, but the owning thread of the `graph_task` might be sleeping on `pop()` if it does not have work. So we need to send a dummy function task to the owning thread just to ensure that it's not sleeping, so that we can exit the `thread_main`. If it has work, it might see that `graph_task->outstanding_tasks_ == 0` before it gets to the task. NB: This is not necessary if the current thread is the owning thread.
+    4. check if completed
+
+        ```
+        bool GraphTask::completed() {
+          return outstanding_tasks_.load() == 0 ||
+              (exit_on_error_ && has_error_.load());
+        }
+        ```
+        The current worker thread finish the `graph_task`, but the owning thread of the `graph_task` might be sleeping on `pop()` if it does not have work. So we need to send a dummy function task to the owning thread just to ensure that it's not sleeping, so that we can exit the `thread_main`. If it has work.
 
 ### Evaluate function
 
