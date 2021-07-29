@@ -613,9 +613,9 @@ void Engine::evaluate_function(
     Note for Streaming backwards:
     1. On CUDA devices the autograd engine's device operations are run on the same stream that ran them in forward. This requires automatically syncing the streams so that function A finishes producing its output before function B consumes it. This synchronization occurs when outputs are placed into input buffers. The functions corresponding to input buffer positions have metadata recording their streams from forward, and during backward this data is used to sync the producer's stream with the consumer's.
 
-    When all the inputs of a CUDA function were on the stream used to run this function, or the inputs are on different devices, the function is responsible for properly acquiring them.
+      When all the inputs of a CUDA function were on the stream used to run this function, or the inputs are on different devices, the function is responsible for properly acquiring them.
     
-    See [Stream semantics of backward passes](https://pytorch.org/docs/stable/notes/cuda.html)
+      See [Stream semantics of backward passes](https://pytorch.org/docs/stable/notes/cuda.html)
 
     2. So GraphTask achieves the above semantics by:
 
