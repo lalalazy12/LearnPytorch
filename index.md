@@ -518,7 +518,7 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
               (exit_on_error_ && has_error_.load());
         }
         ```
-    5. The current worker thread finish the `graph_task`, but the owning thread of the `graph_task` might be sleeping on `pop()` if it does not have work. So we need to send a dummy function task to the owning thread just to ensure that it's not sleeping, so that we can exit the `thread_main`. If it has work.
+    5. If the current worker thread finish the `graph_task`, but the owning thread(different thread) of the `graph_task` might be sleeping on `pop()` if it does not have work. So we need to send a dummy function task to the owning thread just to ensure that it's not sleeping, so that we can exit the `thread_main`. If it has work.
      
 ### Evaluate function
 
@@ -637,11 +637,13 @@ void Engine::evaluate_function(
       return c10::nullopt;}
     ```
     Note for Streaming backwards:
-    1. On CUDA devices the autograd engine's device operations are run on the same stream that ran them in forward. This requires automatically syncing the streams so that function A finishes producing its output before function B consumes it. This synchronization occurs when outputs are placed into input buffers. The functions corresponding to input buffer positions have metadata recording their streams from forward, and during backward this data is used to sync the producer's stream with the consumer's.
-
-      When all the inputs of a CUDA function were on the stream used to run this function, or the inputs are on different devices, the function is responsible for properly acquiring them.
+    1. On CUDA devices the autograd engine's device operations are run on the same stream that ran them in forward. This requires automatically syncing the streams so that function A finishes producing its output before function B consumes it. This 
     
-      See [Stream semantics of backward passes](https://pytorch.org/docs/stable/notes/cuda.html)
+        synchronization occurs when outputs are placed into input buffers. The functions corresponding to input buffer positions have metadata recording their streams from forward, and during backward this data is used to sync the producer's stream with the consumer's.
+
+        When all the inputs of a CUDA function were on the stream used to run this function, or the inputs are on different devices, the function is responsible for properly acquiring them.
+    
+        See [Stream semantics of backward passes](https://pytorch.org/docs/stable/notes/cuda.html)
 
     2. So GraphTask achieves the above semantics by:
 
