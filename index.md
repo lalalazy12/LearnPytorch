@@ -518,8 +518,8 @@ c10::intrusive_ptr<at::ivalue::Future> Engine::execute_with_graph_task(
               (exit_on_error_ && has_error_.load());
         }
         ```
-        The current worker thread finish the `graph_task`, but the owning thread of the `graph_task` might be sleeping on `pop()` if it does not have work. So we need to send a dummy function task to the owning thread just to ensure that it's not sleeping, so that we can exit the `thread_main`. If it has work.
-
+    5. The current worker thread finish the `graph_task`, but the owning thread of the `graph_task` might be sleeping on `pop()` if it does not have work. So we need to send a dummy function task to the owning thread just to ensure that it's not sleeping, so that we can exit the `thread_main`. If it has work.
+     
 ### Evaluate function
 
 ```
