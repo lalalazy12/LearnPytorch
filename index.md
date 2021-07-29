@@ -602,25 +602,25 @@ void Engine::evaluate_function(
 ```
 
 1. Function's Stream
-  A function's stream (for a given device type) is the stream of the first element of its input buffer on a device of that type. If all elements are on the same device they MUST share a stream. If elements are on different devices (across multiple GPUs, for example) they may have different streams.
-  ``` 
-  c10::optional<c10::Stream> stream(const c10::DeviceType device_type) {
-    for (const auto& metadata : input_metadata_) {
-      if (metadata.device().type() == device_type) return metadata.stream();}
-    return c10::nullopt;}
-  ```
-  Note for Streaming backwards:
-  On CUDA devices the autograd engine's device operations are run on the same stream that ran them in forward. This requires automatically syncing the streams so that function A finishes producing its output before function B consumes it.
-  This synchronization occurs when outputs are placed into input buffers. The functions corresponding to input buffer positions have metadata recording their streams from forward, and during backward this data is used to sync the producer's stream with the consumer's.
+    A function's stream (for a given device type) is the stream of the first element of its input buffer on a device of that type. If all elements are on the same device they MUST share a stream. If elements are on different devices (across multiple GPUs, for example) they may have different streams.
+    ``` 
+    c10::optional<c10::Stream> stream(const c10::DeviceType device_type) {
+      for (const auto& metadata : input_metadata_) {
+        if (metadata.device().type() == device_type) return metadata.stream();}
+      return c10::nullopt;}
+    ```
+    Note for Streaming backwards:
+    On CUDA devices the autograd engine's device operations are run on the same stream that ran them in forward. This requires automatically syncing the streams so that function A finishes producing its output before function B consumes it.
+    This synchronization occurs when outputs are placed into input buffers. The functions corresponding to input buffer positions have metadata recording their streams from forward, and during backward this data is used to sync the producer's stream with the consumer's.
 
-  When all the inputs of a CUDA function were on the stream used to run this function, or the inputs are on different devices, the function is responsible for properly acquiring them.
-  
-  See [Stream semantics of backward passes](https://pytorch.org/docs/stable/notes/cuda.html)
+    When all the inputs of a CUDA function were on the stream used to run this function, or the inputs are on different devices, the function is responsible for properly acquiring them.
+    
+    See [Stream semantics of backward passes](https://pytorch.org/docs/stable/notes/cuda.html)
 
-  So GraphTask achieves the above semantics by
-  a.remembering the current streams on all active CUDA devices in the user-facing thread (aka, the thread that called execute() to launch the GraphTask)
-  b.remembering the "leaf streams" (streams each backward leaf node ran on)
-  c. during exec_post_processing, for each leaf stream, sync the remembered current streams (on the leaf stream's device) with that leaf stream.
+    So GraphTask achieves the above semantics by
+    a.remembering the current streams on all active CUDA devices in the user-facing thread (aka, the thread that called execute() to launch the GraphTask)
+    b.remembering the "leaf streams" (streams each backward leaf node ran on)
+    c. during exec_post_processing, for each leaf stream, sync the remembered current streams (on the leaf stream's device) with that leaf stream.
 2. Hook function: execute a hook function attached with a variable in inputs. (inputs of gradient funciton)
 
 3. Call function to execute grad_fn, see next chapter: call_function
