@@ -602,6 +602,7 @@ void Engine::evaluate_function(
 ```
 
 1. Function's Stream
+
     A function's stream (for a given device type) is the stream of the first element of its input buffer on a device of that type. If all elements are on the same device they MUST share a stream. If elements are on different devices (across multiple GPUs, for example) they may have different streams.
     ``` 
     c10::optional<c10::Stream> stream(const c10::DeviceType device_type) {
