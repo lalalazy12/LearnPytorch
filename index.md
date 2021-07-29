@@ -634,7 +634,7 @@ void Engine::evaluate_function(
     
 5. Prepare next `NodeTask` 
 
-    5.1: If `next.function` has not put into `not_ready`,which alse means no buffers have been allocated for the `next_function`, so allocate an input buffer for it and accumulate all the inputs by `input_buffer.add(next.input_nr,std::move(output),opt_parent_stream,opt_next_stream)`.
+    5.1: If `next.function` has not been put into `not_ready`,which alse means no buffers have been allocated for the `next_function`, so allocate an input buffer for it and accumulate all the inputs by `input_buffer.add(next.input_nr,std::move(output),opt_parent_stream,opt_next_stream)`.
 
         In `add`, choose device (and stream) for accumulation function: 
         (1) var is not a CUDA variable. Accumulation happens on var's device.
