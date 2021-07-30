@@ -145,7 +145,7 @@ auto Engine::execute(const edge_list& roots,
 
   // A fresh first time Engine::execute call should start on the CPU device, initialize
   init_local_ready_queue();
-  bool not_reentrant_backward_call = worker_device == NO_DEVICE;??
+  bool not_reentrant_backward_call = worker_device == NO_DEVICE;
   //---------------------------2-------------------------------
               //------------tip 1-----------
   auto graph_task = std::make_shared<GraphTask>(
