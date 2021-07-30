@@ -152,6 +152,7 @@ auto Engine::execute(const edge_list& roots,
       /* keep_graph */ keep_graph,
       /* create_graph */ create_graph,
       /* depth */ not_reentrant_backward_call ? 0 : total_depth + 1,
+      //--------------cpu_ready_queue = local_ready_queue-----------
       /* cpu_ready_queue */ local_ready_queue);
 
   //---------------------------3-------------------------------
