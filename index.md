@@ -652,7 +652,7 @@ void Engine::evaluate_function(
         b.remembering the "leaf streams" (streams each backward leaf node ran on)
 
         c. during exec_post_processing, for each leaf stream, sync the remembered current streams (on the leaf stream's device) with that leaf stream.
-2. Hook function: execute a hook function attached with a variable in inputs. (inputs of gradient funciton)
+2. Hook function: check a hook function attached with a variable in inputs. (inputs of gradient funciton)
 
 3. Call function to execute grad_fn, see next chapter: call_function
 
